@@ -8,7 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Update="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None
+      Include="$(MSBuildThisFileDirectory)..\..\src\Desknav.Kanata\desknav.kbd"
+      Link="desknav.kbd"
+      CopyToOutputDirectory="PreserveNewest" />
     <None
       Include="$(MSBuildThisFileDirectory)..\..\artifacts\tools\kanata-sim\bin\kanata_simulated_input.exe"
       Link="kanata_simulated_input.exe"
