@@ -1,0 +1,47 @@
+(defcfg
+  process-unmapped-keys yes
+  movemouse-inherit-accel-state yes
+  movemouse-smooth-diagonals yes
+)
+
+(defsrc
+  caps spc esc h j k l
+)
+
+(defvar
+  pointer-interval 8
+  pointer-acceleration-time 700
+  pointer-min-distance 1
+  pointer-max-distance 12
+)
+
+(deflayermap (base)
+  caps (layer-switch wm)
+)
+
+(deflayermap (wm)
+  caps (layer-switch base)
+  spc (layer-switch pointer)
+  esc (layer-switch base)
+  h (multi h (layer-switch base))
+  j (multi j (layer-switch base))
+  k (multi k (layer-switch base))
+  l (multi l (layer-switch base))
+)
+
+(deflayermap (pointer)
+  caps (layer-switch base)
+  esc (layer-switch base)
+  spc XX
+  h @left
+  j @down
+  k @up
+  l @right
+)
+
+(defalias
+  left (movemouse-accel-left $pointer-interval $pointer-acceleration-time $pointer-min-distance $pointer-max-distance)
+  down (movemouse-accel-down $pointer-interval $pointer-acceleration-time $pointer-min-distance $pointer-max-distance)
+  up (movemouse-accel-up $pointer-interval $pointer-acceleration-time $pointer-min-distance $pointer-max-distance)
+  right (movemouse-accel-right $pointer-interval $pointer-acceleration-time $pointer-min-distance $pointer-max-distance)
+)
