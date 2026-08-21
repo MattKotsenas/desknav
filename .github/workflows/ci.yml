@@ -19,6 +19,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Kanata simulator
+        run: |
+          $simulator = ./eng/install-kanata-simulator.ps1 `
+            -Destination "${{ runner.temp }}\kanata-sim"
+          "KANATA_SIMULATOR_PATH=$simulator" >> $env:GITHUB_ENV
+
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
