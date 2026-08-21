@@ -1,0 +1,18 @@
+<Project>
+  <Sdk Name="DotNet.ReproducibleBuilds.Isolated" Version="2.0.5" />
+
+  <PropertyGroup>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <DefaultTargetFramework>net10.0</DefaultTargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference
+      Include="DotNet.ReproducibleBuilds"
+      PrivateAssets="All" />
+  </ItemGroup>
+</Project>
