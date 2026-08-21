@@ -1,2 +1,5 @@
 <Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/Desknav.Kanata.Tests/Desknav.Kanata.Tests.csproj" />
+  </Folder>
 </Solution>

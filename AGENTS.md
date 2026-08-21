@@ -66,7 +66,7 @@ migration cannot preserve the existing contract.
 Run:
 
 ```powershell
-dotnet test desknav.slnx -c Release
+dotnet run --project eng\build.csproj
 ```
 
 Before completion, review correctness and craft separately. Ask reviewers to
