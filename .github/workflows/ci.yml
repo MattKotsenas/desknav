@@ -19,15 +19,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Kanata simulator
-        run: |
-          $simulator = ./eng/install-kanata-simulator.ps1 `
-            -Destination "${{ runner.temp }}\kanata-sim"
-          "KANATA_SIMULATOR_PATH=$simulator" >> $env:GITHUB_ENV
-
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
 
+      - name: Install Kanata simulator
+        uses: cake-build/cake-action@d218f1133bb74a1df0b08c89cfd8fc100c09e1a0 # v3.0.1
+        with:
+          project-path: build/build.csproj
+          target: Install-Kanata-Simulator
+
       - name: Test
-        run: dotnet test desknav.slnx -c Release
+        run: dotnet test --solution desknav.slnx --configuration Release

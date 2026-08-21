@@ -1,5 +1,5 @@
-using System.Diagnostics;
-using System.Text;
+using CliWrap;
+using CliWrap.Buffered;
 
 namespace Desknav.Kanata.Tests;
 
@@ -22,13 +22,9 @@ public sealed class KanataSimulatorTests
 
     private static async Task<string> RunSimulatorAsync(string simulation)
     {
-        var simulatorPath = Environment.GetEnvironmentVariable(
-            "KANATA_SIMULATOR_PATH");
-        if (string.IsNullOrWhiteSpace(simulatorPath))
-        {
-            throw new InvalidOperationException(
-                "KANATA_SIMULATOR_PATH must identify kanata_simulated_input.exe.");
-        }
+        var simulatorPath = Path.Combine(
+            AppContext.BaseDirectory,
+            "kanata_simulated_input.exe");
 
         if (!File.Exists(simulatorPath))
         {
@@ -38,43 +34,33 @@ public sealed class KanataSimulatorTests
         }
 
         var fixtures = Path.Combine(AppContext.BaseDirectory, "Fixtures");
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = simulatorPath,
-            RedirectStandardError = true,
-            RedirectStandardOutput = true,
-            StandardErrorEncoding = Encoding.UTF8,
-            StandardOutputEncoding = Encoding.UTF8,
-            UseShellExecute = false,
-        };
-        startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add(Path.Combine(fixtures, "pointer-left.kbd"));
-        startInfo.ArgumentList.Add("-s");
-        startInfo.ArgumentList.Add(Path.Combine(fixtures, simulation));
-
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Kanata simulator did not start.");
-        var standardOutput = process.StandardOutput.ReadToEndAsync();
-        var standardError = process.StandardError.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-
+        BufferedCommandResult result;
         try
         {
-            await process.WaitForExitAsync(timeout.Token);
+            result = await Cli.Wrap(simulatorPath)
+                .WithArguments(arguments => arguments
+                    .Add("-c")
+                    .Add(Path.Combine(fixtures, "pointer-left.kbd"))
+                    .Add("-s")
+                    .Add(Path.Combine(fixtures, simulation)))
+                .WithValidation(CommandResultValidation.None)
+                .ExecuteBufferedAsync(timeout.Token);
         }
         catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
             Assert.Fail("Kanata simulator did not exit within 30 seconds.");
+            throw;
         }
 
-        var output = await standardOutput;
-        var error = await standardError;
         Assert.True(
-            process.ExitCode == 0,
-            $"Kanata simulator exited with code {process.ExitCode}.{Environment.NewLine}{output}{error}");
+            result.ExitCode == 0,
+            $"Kanata simulator exited with code {result.ExitCode}."
+            + Environment.NewLine
+            + result.StandardOutput
+            + result.StandardError);
 
-        return output;
+        return result.StandardOutput;
     }
 
     private static string[] MouseMoves(string output) =>

@@ -66,8 +66,8 @@ migration cannot preserve the existing contract.
 Run:
 
 ```powershell
-$env:KANATA_SIMULATOR_PATH = .\eng\install-kanata-simulator.ps1
-dotnet test desknav.slnx -c Release
+dotnet run --project build\build.csproj -- --target=Install-Kanata-Simulator
+dotnet test --solution desknav.slnx --configuration Release
 ```
 
 Before completion, review correctness and craft separately. Ask reviewers to

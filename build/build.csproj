@@ -1,0 +1,6 @@
+<Project Sdk="Cake.Sdk/6.2.0">
+  <PropertyGroup>
+    <TargetFramework>$(DefaultTargetFramework)</TargetFramework>
+    <RunWorkingDirectory>$(MSBuildProjectDirectory)/..</RunWorkingDirectory>
+  </PropertyGroup>
+</Project>
