@@ -66,8 +66,7 @@ migration cannot preserve the existing contract.
 Run:
 
 ```powershell
-dotnet run --project build\build.csproj -- --target=Install-Kanata-Simulator
-dotnet test --solution desknav.slnx --configuration Release
+dotnet run --project eng\build.csproj
 ```
 
 Before completion, review correctness and craft separately. Ask reviewers to

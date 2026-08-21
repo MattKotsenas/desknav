@@ -1,8 +1,9 @@
 const string installTarget = "Install-Kanata-Simulator";
+const string testTarget = "Test";
 const string kanataV1_11_0Revision =
     "4e6bec4d52d044bd13cfa01cea4e02dc2d246c65";
 
-var target = Argument("target", installTarget);
+var target = Argument("target", testTarget);
 
 Task(installTarget)
     .Does(() =>
@@ -40,6 +41,29 @@ Task(installTarget)
     }
 
     Information("Kanata simulator: {0}", simulator);
+});
+
+Task(testTarget)
+    .IsDependentOn(installTarget)
+    .Does(() =>
+{
+    var exitCode = StartProcess(
+        "dotnet",
+        new ProcessSettings
+        {
+            Arguments = new ProcessArgumentBuilder()
+                .Append("test")
+                .Append("--solution")
+                .AppendQuoted("desknav.slnx")
+                .Append("--configuration")
+                .Append("Release"),
+        });
+
+    if (exitCode != 0)
+    {
+        throw new InvalidOperationException(
+            $"Tests failed with exit code {exitCode}.");
+    }
 });
 
 RunTarget(target);
