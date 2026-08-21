@@ -63,8 +63,11 @@ migration cannot preserve the existing contract.
 
 ## Verification
 
-Run the command in the README's
-[Verification](README.md#verification) section.
+Run:
+
+```powershell
+dotnet test desknav.slnx -c Release
+```
 
 Before completion, review correctness and craft separately. Ask reviewers to
 falsify the load-bearing claim rather than confirm the implementation.

@@ -23,6 +23,5 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Verify repository
-        shell: pwsh
-        run: ./eng/verify.ps1
+      - name: Test
+        run: dotnet test desknav.slnx -c Release
