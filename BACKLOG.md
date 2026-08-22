@@ -1,94 +1,71 @@
 # Backlog
 
-This file records implementation status and order. The architecture remains
-defined by [ARCHITECTURE.md](ARCHITECTURE.md).
+This file records future work in priority order. Delete an item when its
+outcome is complete. [ARCHITECTURE.md](ARCHITECTURE.md) remains the source of
+truth for system shape.
 
-Each backlog item states an observable outcome and the proof that closes it.
-An item can span more than one pull request only when every pull request has
-its own independently observable finish line.
+## 1. Make full verification the default so required checks cannot be omitted
 
-## Complete
+Add an `All` target to the repository build script at `eng\build.cs`. The
+target depends on every repository check and is the default target.
 
-### Repository verification
+Done when local verification and CI both execute `All`, and adding a new check
+to that aggregate makes it part of the safe default.
 
-**Outcome:** one command installs the pinned Kanata simulator and runs the
-repository test suite in CI and locally.
+## 2. Package runtime behavior so deployed configuration matches tested source
 
-**Proof:** the [repository verification](CONTRIBUTING.md#verification) passes
-locally and in CI.
+Produce a pinned Desknav artifact as the single production source for Kanata
+behavior. Deployment owns provisioning and lifecycle; this repository owns
+the artifact's runtime behavior.
 
-### Native pointer movement
+Done when Windows acceptance proves startup, restart, rollback, and live
+pointer movement from the pinned artifact, with any replaced movement path
+removed or explicitly gated.
 
-**Outcome:** Caps followed by Space enters a persistent pointer layer. Held
-H/J/K/L keys accelerate in four directions, compose diagonally, stop on
-release, and exit through Caps or Escape.
+## 3. Route semantic actions through the control plane so each action has one owner
 
-**Proof:** the production keymap passes the Kanata simulator behavior suite,
-including independent-axis release.
+Wire complete semantic intents from Kanata into the control plane. Route one
+semantic action through the control plane to a component. Complete the action
+with an observable outcome and confirmed Kanata restoration.
 
-## Ordered work
+Done when deterministic integration tests exercise intent ingress and the
+component boundary, and prove that a result cannot complete an action other
+than the one that requested it. One case times out an action, starts a later
+action while the component remains connected, and then delivers the earlier
+action's result. Another ends an action on disconnect, restarts its component,
+starts a later action, and then delivers the earlier result. The tests confirm
+Kanata restoration for every outcome.
 
-### 1. Reproducible runtime consumption
+## 4. Present visible targets so the user can choose a desktop action
 
-**Outcome:** a pinned Desknav artifact is the single production source for its
-Kanata behavior.
+Add Desknav UI overlays, read-only target discovery, and explicitly selected
+point or activation actions. The control plane retains ownership of the
+semantic action while the UI owns presentation and the selected one-shot
+effect.
 
-**Boundary:** deployment owns provisioning and lifecycle; this repository owns
-the generated runtime behavior. Any replaced movement path is removed or
-explicitly gated.
+Done when Windows acceptance proves point without activation, explicit
+activation, cancellation after targets appear, focus change before the
+one-shot action, and no stale overlay or command character.
 
-**Finish line:** the dedicated VM proves startup, restart, rollback, and live
-pointer movement from the pinned artifact.
+## 5. Route by focused context so one intent produces the defined desktop result
 
-### 2. Semantic session input
+Select the component that can deliver the intent's defined result in the
+observed focus context. Komorebi, Desknav UI, and UI Automation report their
+capabilities and refusals; the control plane owns the routing decision.
 
-**Outcome:** a complete semantic intent enters the control plane, reaches one
-test provider host, returns a correlated outcome, and restores the Kanata base
-layer.
+Done when behavior and Windows acceptance tests cover eligible and ineligible
+desktop states, context changes during routing, explicit refusal, and the
+absence of silent fallback to a different result.
 
-**Boundary:** this slice establishes real intent ingress and the process
-protocol without adding desktop target actions.
+## 6. Define runtime failure outcomes so recovery never replays an action
 
-**Finish line:** deterministic behavior tests reorder responses, timeouts,
-disconnects, and layer echoes across distinct connection epochs, request
-sequences, intent generations, host session tokens, and restoration operation
-IDs. Stale work cannot complete the current session.
+Handle the expected failure events defined in
+[ARCHITECTURE.md](ARCHITECTURE.md) while distinguishing a refusal from an
+action whose external outcome is unknown. Stop the application after
+unexpected action-owner failure.
 
-### 3. Visible-target actions
-
-**Outcome:** a semantic command presents visible desktop targets and performs
-the explicitly selected point or activation action.
-
-**Boundary:** Pointer UI owns overlays, read-only target discovery, and the
-selected one-shot action. The control plane owns session lifetime and outcome.
-
-**Finish line:** VM acceptance proves point-without-activation, explicit
-activation, cancellation after targets appear, focus change before commit, and
-outcome-unknown handling after commit. No stale overlay or command character
-remains.
-
-### 4. Focus-context routing
-
-**Outcome:** one semantic intent resolves to the provider that can deliver its
-defined result in the focused context.
-
-**Boundary:** provider selection belongs to the control plane. Komorebi,
-Pointer UI, and UI Automation expose observable capabilities and distinct
-refusals; they do not choose fallback behavior.
-
-**Finish line:** behavior and VM tests cover eligible and ineligible desktop
-states, context changes during resolution, provider refusal, and the absence of
-silent fallback to a different semantic result.
-
-### 5. Runtime recovery
-
-**Outcome:** expected provider and transport failures restore keyboard
-ownership, while ambiguous committed actions remain outcome unknown and are
-never replayed.
-
-**Boundary:** the coordinator owns bounded leases, revocation, process-session
-replacement, and Kanata reconciliation.
-
-**Finish line:** end-to-end VM tests exercise timeout, disconnect, Pointer UI
-restart, stale result delivery, restoration retry, and unexpected coordinator
-failure.
+Done when Windows acceptance covers timeout, explicit component refusal,
+outcome unknown, disconnect, repeated restoration, and restarts of Kanata,
+Desknav UI, and Komorebi. A separate acceptance case proves that unexpected
+action-owner failure stops the application without replaying an ambiguous
+one-shot action.

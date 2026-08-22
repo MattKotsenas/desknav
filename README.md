@@ -2,14 +2,14 @@
 
 desknav is a keyboard-first Windows desktop navigation system. The repository
 provides a native Kanata pointer layer and its simulator behavior suite. Its
-architecture defines the .NET control plane, Pointer UI host, Komorebi, and UI
+architecture defines the control plane, Desknav UI, Komorebi, and UI
 Automation boundaries that compose the complete system.
 
 ## Repository guide
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) defines the system shape, ownership, and
-  protocol semantics.
-- [BACKLOG.md](BACKLOG.md) records implementation order and observable finish
-  lines.
-- [CONTRIBUTING.md](CONTRIBUTING.md) defines development, verification, and
-  pull-request requirements.
+- [ARCHITECTURE.md](ARCHITECTURE.md) defines the system values, principles,
+  components, interaction paths, recovery, and verification.
+- [BACKLOG.md](BACKLOG.md) records future work in priority order and the
+  evidence required to complete each item.
+- [CONTRIBUTING.md](CONTRIBUTING.md) defines contribution practices,
+  verification, and pull-request requirements.

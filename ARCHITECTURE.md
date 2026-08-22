@@ -1,164 +1,141 @@
 # Architecture
 
-Desknav provides keyboard-first Windows desktop navigation. It keeps every
+Desknav provides keyboard-first Windows desktop navigation. It keeps each
 input path, state transition, and recovery action small enough to understand
 and test without loading the whole desktop stack into memory.
 
-This document defines the system shape. [BACKLOG.md](BACKLOG.md) records
-implementation status and order.
+This document defines the durable system shape. See [BACKLOG.md](BACKLOG.md)
+for implementation work.
 
-## System goals
+## Values
 
-Desknav gives direct physical actions a short, low-latency path and gives
-semantic actions an explicit lifetime and outcome. Each mutable state has one
-owner. External systems are observed and reconciled rather than assumed to be
-in sync.
+- **Immediacy:** Desktop navigation feels direct.
+- **Comprehensibility:** Each path is understandable in isolation.
+- **Predictability:** An action has one meaning and an explicit
+  outcome.
+- **Recoverability:** Handled failures return control without guessing whether
+  an external action occurred; unexpected action-owner failure stops the
+  application.
 
-## Topology
+## Principles
 
-```mermaid
-flowchart LR
-    Keyboard[Physical keyboard] --> Kanata
-    Kanata -->|pointer, wheel, button input| Windows[Windows input]
-    Kanata -->|semantic intent and layer echo| Control[.NET control plane]
-    Control -->|correlated session protocol| PointerUI[Pointer UI host]
-    Control -->|window intent| Komorebi
-    PointerUI -->|target discovery and one-shot action| UIA[UI Automation]
-    PointerUI --> Overlay[Desktop overlay]
-    Komorebi --> Desktop[Windows desktop]
-    UIA --> Desktop
-    Windows --> Desktop
-```
+### Continuous input takes a direct path
 
-Dependencies point from adapters toward pure state and policy. The policy does
-not depend on Windows, UI Automation, pipes, or process APIs.
+Continuous input reaches Windows without entering semantic-action routing.
 
-## Ownership
+### Semantic actions have one lifetime
 
-| Component | Owns | Does not own |
-|---|---|---|
-| Kanata | The only keyboard hook, keyboard layers, continuous pointer movement, wheel input, and physical button taps | Semantic routing, overlays, or provider sessions |
-| .NET control plane | Complete semantic intents, focus-context routing, session coordination, outcomes, and restoration | Continuous pointer-motion state or desktop overlays |
-| Pointer UI host | Overlays, read-only target discovery, and explicitly requested one-shot actions | Global keyboard capture or provider selection |
-| Komorebi | Window-manager effects and its observable state | Desknav session lifetime or fallback policy |
-| UI Automation | The observable accessibility tree and requested control actions | Desknav session identity or retry policy |
+A semantic action is a complete request for a desktop result, such as focusing
+a window or acting on a selected target. It has one owner from acceptance
+through outcome and keyboard restoration. A result can complete only the
+action that requested it; a result arriving after that action ends cannot
+complete a later action.
 
-One local Akka.NET actor owns the Pointer UI session. The coordinator has no
-cluster, persistence, sharding, distributed pub/sub, stream, or child-actor
-topology. Another actor earns a place only when it owns an independent
-lifetime that the coordinator cannot represent safely.
+### External state is reconciled
 
-Kanata, Akka.NET, Komorebi, and UI Automation remain visible at their native
-APIs. An adapter exists only where Desknav defends a process, operating-system,
-or protocol boundary; it does not rename a library behind a pass-through API.
+Komorebi, UI Automation, Kanata, and the Windows desktop remain authoritative
+for their observable state. Desknav reads that state after failures, restarts,
+and contradictory events instead of extending an invalid in-memory
+assumption.
 
-## Input paths
+### Policy is pure and effects stay at the boundary
 
-### Continuous physical actions
+State transitions and routing policy do not depend on Windows, UI Automation,
+pipes, or process APIs. Adapters perform effects and report observations to
+the policy that decides what they mean. Integration code uses native APIs
+directly; an adapter exists only to isolate a process or operating-system
+boundary from policy.
 
-Physical key, pointer, wheel, and button input flows through Kanata directly to
-Windows. The control plane does not mirror, replay, or maintain a second copy
-of continuous pointer state.
+## Components
+
+### Kanata
+
+Kanata is the only keyboard hook. It owns keyboard layers, continuous pointer
+movement, wheel input, and physical button taps. It emits complete semantic
+intents to the control plane and reports layer changes used to confirm
+keyboard restoration.
+
+### Control plane
+
+The control plane owns semantic intent interpretation, focus-context routing,
+action lifetime, outcomes, and restoration. One local Akka.NET actor owns the
+active semantic action so all events for that action are serialized through
+one owner.
+
+### Desknav UI
+
+Desknav UI owns overlays, read-only target discovery, and explicitly requested
+one-shot point or activation actions. It does not capture the keyboard or
+choose how an intent is routed.
+
+### Komorebi
+
+Komorebi is an external window manager. Desknav requests defined window
+effects and reconciles Komorebi's observable state.
+
+### UI Automation
+
+UI Automation is an external Windows interface for observing and acting on
+accessible desktop elements. Desknav treats its tree and action results as
+external observations.
+
+## Interaction paths
+
+### Continuous physical input
+
+Physical movement, wheel, and button input flows from the keyboard through
+Kanata to Windows. Its lifetime is the physical key state.
 
 ### Semantic actions
 
-A semantic action follows one coordinated path:
+The control plane routes each action to the component that can deliver its
+defined result: Desknav UI, Komorebi, or UI Automation.
 
-1. Kanata captures a complete intent without emitting command characters to
-   the focused application.
-2. The control plane accepts the intent and snapshots the relevant focus
-   context.
-3. The coordinator resolves one eligible provider.
-4. The provider acknowledges a correlated session for that context.
-5. A direct action commits, or a target-selection action presents choices and
-   accepts one correlated selection.
-6. The provider validates the acknowledged context and performs the action as
-   one commit operation.
-7. The coordinator makes the provider quiescent and reconciles Kanata to its
-   base layer before returning ordinary keyboard input.
+```mermaid
+sequenceDiagram
+    participant K as Kanata
+    participant C as Control plane
+    participant S as Selected component
+    participant D as Desktop state
 
-A provider either performs the requested semantic result or returns a distinct
-refusal. The coordinator does not silently fall through to another provider
-whose boundary behavior differs.
+    K->>C: Complete semantic intent
+    C->>C: Capture context and start action
+    C->>S: Request the defined result
+    S->>D: Observe or apply desktop effect
+    D-->>S: Observable state
+    S-->>C: Action outcome
+    C->>K: Restore base layer
+    K-->>C: Confirmed layer state
+```
 
-## Session state
-
-The session owner moves through these phases:
-
-| Phase | Meaning |
-|---|---|
-| Idle | No semantic session owns keyboard input |
-| Resolving | An intent and focus snapshot exist while one provider is selected |
-| Active | A provider has acknowledged the context and may present targets |
-| Committing | One accepted action is being validated and performed |
-| Restoring | The provider is quiescent and the Kanata base layer is being reconciled |
-
-A direct action can move from resolving to committing without an active target
-selection phase.
-
-Cancellation wins before the atomic transition to committing. The commit wins
-after that transition, including when the action itself changes focus. Focus
-change, timeout, rejection, or user cancellation before commit produces a
-refusal and no action. A timeout after commit begins produces **outcome
-unknown**, because the external action may have occurred. Desknav never retries
-an outcome-unknown action automatically.
-
-The coordinator returns keyboard ownership only after the provider is
-quiescent. Cancellation and commit each have an explicit finite deadline in
-coordinator policy. When either deadline expires, coordinator-controlled
-revocation has its own explicit finite deadline. These deadlines are
-configuration values, and behavior tests assert their exact boundaries. A
-provider without bounded revocation is not eligible for the protocol.
-
-## Identity model
-
-The protocol keeps independent lifetimes independent:
-
-| Identity | Scope |
-|---|---|
-| Intent generation | One accepted user intent and the callbacks it permits |
-| Connection epoch | One transport connection lifetime |
-| Request sequence | One request within a connection epoch |
-| Host session token | One Pointer UI host process lifetime |
-| Restoration operation ID | One idempotent request to reconcile Kanata state |
-
-No identity substitutes for another. A request sequence is meaningful only
-with its connection epoch. A host session token prevents results from a
-replaced Pointer UI process from joining the current session. An intent
-generation invalidates late work from an older user command. A restoration
-operation ID allows the same reconciliation request to repeat without creating
-a second logical restoration.
-
-Pending work is bounded. Every timeout, response, disconnect, selection, and
-completion carries enough identity to reject stale or unrelated messages.
+An action that needs a visible choice pauses in Desknav UI until the user
+selects or cancels. Each semantic action ends with an explicit outcome. If a
+one-shot external action may have occurred but cannot be confirmed, its
+outcome is unknown and Desknav does not retry it automatically.
 
 ## Failure and recovery
 
-Expected pipe failures, timeouts, rejections, disconnects, and provider
-revocations are coordinator messages. They drive explicit state transitions
-and outcomes.
+Expected timeouts, refusals, disconnects, and restarts of Kanata, Desknav UI,
+or Komorebi are events handled by the control plane. They produce an explicit
+outcome and recovery path.
 
-Unexpected actor failure stops the application. Restarting an actor can replay
-an ambiguous one-shot action, so supervision does not resume the coordinator
-after an unexpected failure.
+A refusal is an explicit result that the selected component cannot perform
+the requested action. It ends the action; the control plane does not
+substitute a different result.
 
-Base restoration is idempotent reconciliation. Completion requires a Kanata
-layer echo for the requested state; writing a command is not confirmation.
-External effects may repeat during reconciliation, but the logical restoration
-operation remains the same.
+An unexpected failure of the actor that owns the active action stops the
+application. Restarting that actor could replay an ambiguous one-shot action.
 
-Komorebi, UI Automation, and Pointer UI process state are external observations.
-Desknav re-reads them after disconnect, restart, or contradictory events rather
-than extending an invalid in-memory assumption.
+Keyboard restoration is reconciliation, not a write-only command. Desknav
+returns ordinary keyboard control only after Kanata reports the requested
+layer state. Repeating that request is safe because it asks for a state rather
+than another logical action.
 
-## Verification boundaries
+## Verification
 
-Pure behavior tests cover state transitions, identity correlation, reordered
-events, timeout boundaries, cancellation, and recovery policy. Kanata simulator
-tests execute the production keymap and assert its emitted input behavior.
-Protocol integration tests exercise real process and transport boundaries with
-controlled external adapters.
-
-Live desktop, hardware-input, cursor, UI Automation, process-restart, and
-visual-overlay acceptance runs only in the dedicated Windows VM. These checks
-prove effects that a simulator or unit test cannot observe.
+Each property is tested at the lowest boundary that can observe it. Pure
+behavior tests cover policy and state transitions. Kanata simulator tests run
+the production keymap. Hardware input, live desktop state, UI Automation, and
+visual overlays require acceptance testing in an isolated Windows VM because
+simulators cannot prove those effects and the tests can take control of the
+keyboard or pointer.
