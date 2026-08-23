@@ -4,15 +4,15 @@ This file records future work in priority order. Delete an item when its
 outcome is complete. [ARCHITECTURE.md](ARCHITECTURE.md) remains the source of
 truth for system shape.
 
-## 1. Package runtime behavior so deployed configuration matches tested source
+## 1. Consume the packaged runtime so deployment can recover safely
 
-Produce a pinned Desknav artifact as the single production source for Kanata
+Deploy the pinned Desknav artifact as the single production source for Kanata
 behavior. Deployment owns provisioning and lifecycle; this repository owns
 the artifact's runtime behavior.
 
-Done when Windows acceptance proves startup, restart, rollback, and live
-pointer movement from the pinned artifact, with any replaced movement path
-removed or explicitly gated.
+Done when Windows acceptance through the production deployment proves startup,
+restart, rollback, and live pointer movement from the pinned artifact, with
+any replaced movement path removed or explicitly gated.
 
 ## 2. Route semantic actions through the control plane so each action has one owner
 

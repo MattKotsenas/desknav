@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "configuration": "desknav.kbd",
+  "kanata": {
+    "release": "v1.11.0",
+    "sourceRevision": "4e6bec4d52d044bd13cfa01cea4e02dc2d246c65",
+    "uri": "https://github.com/jtroo/kanata/releases/download/v1.11.0/windows-binaries-x64.zip",
+    "sha256": "db43d06e7f8d0578bc77585bc24bb385cc99862e942e5554dbf3dec02bf081e9",
+    "executable": "kanata_windows_tty_winIOv2_x64.exe"
+  }
+}
