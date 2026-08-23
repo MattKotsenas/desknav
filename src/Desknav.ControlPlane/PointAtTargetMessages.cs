@@ -2,21 +2,30 @@ namespace Desknav.ControlPlane;
 
 public sealed record PointAtTarget;
 
-public sealed record ExecutePointAtTarget(ActionId ActionId);
+public static class PointerUiCommands
+{
+    public sealed record ExecutePointAtTarget(ActionId ActionId);
+}
 
 public sealed record PointAtTargetExecuted(ActionId ActionId);
 
 public sealed record PointAtTargetCancelled(ActionId ActionId);
 
-public sealed record RestoreBaseLayer;
+public static class KanataCommands
+{
+    public sealed record RestoreBaseLayer;
+}
 
 public sealed record BaseLayerActive;
 
-public sealed record PointAtTargetBusy;
+public abstract record PointAtTargetResult;
+
+public sealed record PointAtTargetAlreadyActive : PointAtTargetResult;
 
 public sealed record PointAtTargetCompleted(
     ActionId ActionId,
-    PointAtTargetOutcome Outcome);
+    PointAtTargetOutcome Outcome)
+    : PointAtTargetResult;
 
 public enum PointAtTargetOutcome
 {

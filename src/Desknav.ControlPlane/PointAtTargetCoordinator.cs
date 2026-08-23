@@ -1,5 +1,7 @@
 using Akka.Actor;
 
+using Effects = Desknav.ControlPlane.PointAtTargetLifecycle.Effects;
+
 namespace Desknav.ControlPlane;
 
 public sealed class PointAtTargetCoordinator : ReceiveActor
@@ -54,7 +56,7 @@ public sealed class PointAtTargetCoordinator : ReceiveActor
     private void Start(IActorRef requester)
     {
         var transition = _lifecycle.Start();
-        if (transition.Effect is ExecutePointAtTargetEffect)
+        if (transition.Effect is Effects.ExecutePointAtTarget)
         {
             _requester = requester;
         }
@@ -72,20 +74,21 @@ public sealed class PointAtTargetCoordinator : ReceiveActor
         {
             case null:
                 return;
-            case ExecutePointAtTargetEffect execute:
+            case Effects.ExecutePointAtTarget execute:
                 _pointerUi.Tell(
-                    new ExecutePointAtTarget(execute.ActionId),
+                    new PointerUiCommands.ExecutePointAtTarget(
+                        execute.ActionId),
                     Self);
                 return;
-            case RefusePointAtTargetBusyEffect:
+            case Effects.RejectAlreadyActive:
                 (requester ?? throw new InvalidOperationException(
-                    "A busy refusal requires a requester."))
-                    .Tell(new PointAtTargetBusy(), Self);
+                    "An overlap rejection requires a requester."))
+                    .Tell(new PointAtTargetAlreadyActive(), Self);
                 return;
-            case RestoreBaseLayerEffect:
-                _kanata.Tell(new RestoreBaseLayer(), Self);
+            case Effects.RestoreBaseLayer:
+                _kanata.Tell(new KanataCommands.RestoreBaseLayer(), Self);
                 return;
-            case CompletePointAtTargetEffect complete:
+            case Effects.Complete complete:
                 var completedRequester =
                     _requester ?? throw new InvalidOperationException(
                         "An active action requires a requester.");

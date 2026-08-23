@@ -1,28 +1,39 @@
 using Akka.Actor;
+using Akka.Pattern;
 
 namespace Desknav.ControlPlane.Tests;
 
 public sealed class PointAtTargetCoordinatorTests
 {
     [Fact]
-    public async Task RefusesASecondActionWhileOneIsActive()
+    public async Task ReportsAlreadyActiveToASecondRequest()
     {
         await using var harness = CoordinatorHarness.Create();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var firstRequester = harness.CreateProbe("first-requester");
-        var secondRequester = harness.CreateProbe("second-requester");
 
-        harness.Coordinator.Tell(new PointAtTarget(), firstRequester.Ref);
-        _ = await harness.PointerUi.ExpectMsgAsync<ExecutePointAtTarget>(
-            cancellationToken: cancellationToken);
-
-        harness.Coordinator.Tell(new PointAtTarget(), secondRequester.Ref);
-
-        _ = await secondRequester.ExpectMsgAsync<PointAtTargetBusy>(
-            cancellationToken: cancellationToken);
-        await firstRequester.ExpectNoMsgAsync(
-            TimeSpan.Zero,
+        var firstResult = harness.Coordinator.Ask<PointAtTargetResult>(
+            new PointAtTarget(),
             cancellationToken);
+        var first =
+            await harness.PointerUi.ExpectMsgAsync<
+                PointerUiCommands.ExecutePointAtTarget>(
+                cancellationToken: cancellationToken);
+
+        var secondResult = await harness.Coordinator.Ask<PointAtTargetResult>(
+            new PointAtTarget(),
+            cancellationToken);
+
+        _ = Assert.IsType<PointAtTargetAlreadyActive>(secondResult);
+        Assert.False(firstResult.IsCompleted);
+
+        harness.Coordinator.Tell(
+            new PointAtTargetCancelled(first.ActionId),
+            harness.PointerUi.Ref);
+        _ = await harness.Kanata.ExpectMsgAsync<
+            KanataCommands.RestoreBaseLayer>(
+                cancellationToken: cancellationToken);
+        harness.Coordinator.Tell(new BaseLayerActive(), harness.Kanata.Ref);
+        _ = Assert.IsType<PointAtTargetCompleted>(await firstResult);
     }
 
     [Fact]
@@ -30,26 +41,27 @@ public sealed class PointAtTargetCoordinatorTests
     {
         await using var harness = CoordinatorHarness.Create();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var requester = harness.CreateProbe("requester");
 
-        harness.Coordinator.Tell(new PointAtTarget(), requester.Ref);
+        var result = harness.Coordinator.Ask<PointAtTargetResult>(
+            new PointAtTarget(),
+            cancellationToken);
         var execute =
-            await harness.PointerUi.ExpectMsgAsync<ExecutePointAtTarget>(
-                cancellationToken: cancellationToken);
+            await harness.PointerUi.ExpectMsgAsync<
+                PointerUiCommands.ExecutePointAtTarget>(
+                    cancellationToken: cancellationToken);
 
         harness.Coordinator.Tell(
             new PointAtTargetExecuted(execute.ActionId),
             harness.PointerUi.Ref);
 
-        _ = await harness.Kanata.ExpectMsgAsync<RestoreBaseLayer>(
-            cancellationToken: cancellationToken);
-        await requester.ExpectNoMsgAsync(TimeSpan.Zero, cancellationToken);
+        _ = await harness.Kanata.ExpectMsgAsync<
+            KanataCommands.RestoreBaseLayer>(
+                cancellationToken: cancellationToken);
+        Assert.False(result.IsCompleted);
 
         harness.Coordinator.Tell(new BaseLayerActive(), harness.Kanata.Ref);
 
-        var completed =
-            await requester.ExpectMsgAsync<PointAtTargetCompleted>(
-                cancellationToken: cancellationToken);
+        var completed = Assert.IsType<PointAtTargetCompleted>(await result);
         Assert.Equal(execute.ActionId, completed.ActionId);
         Assert.Equal(PointAtTargetOutcome.Pointed, completed.Outcome);
     }
@@ -59,26 +71,27 @@ public sealed class PointAtTargetCoordinatorTests
     {
         await using var harness = CoordinatorHarness.Create();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var requester = harness.CreateProbe("requester");
 
-        harness.Coordinator.Tell(new PointAtTarget(), requester.Ref);
+        var result = harness.Coordinator.Ask<PointAtTargetResult>(
+            new PointAtTarget(),
+            cancellationToken);
         var execute =
-            await harness.PointerUi.ExpectMsgAsync<ExecutePointAtTarget>(
-                cancellationToken: cancellationToken);
+            await harness.PointerUi.ExpectMsgAsync<
+                PointerUiCommands.ExecutePointAtTarget>(
+                    cancellationToken: cancellationToken);
 
         harness.Coordinator.Tell(
             new PointAtTargetCancelled(execute.ActionId),
             harness.PointerUi.Ref);
 
-        _ = await harness.Kanata.ExpectMsgAsync<RestoreBaseLayer>(
-            cancellationToken: cancellationToken);
-        await requester.ExpectNoMsgAsync(TimeSpan.Zero, cancellationToken);
+        _ = await harness.Kanata.ExpectMsgAsync<
+            KanataCommands.RestoreBaseLayer>(
+                cancellationToken: cancellationToken);
+        Assert.False(result.IsCompleted);
 
         harness.Coordinator.Tell(new BaseLayerActive(), harness.Kanata.Ref);
 
-        var completed =
-            await requester.ExpectMsgAsync<PointAtTargetCompleted>(
-                cancellationToken: cancellationToken);
+        var completed = Assert.IsType<PointAtTargetCompleted>(await result);
         Assert.Equal(execute.ActionId, completed.ActionId);
         Assert.Equal(PointAtTargetOutcome.Cancelled, completed.Outcome);
     }
@@ -88,26 +101,30 @@ public sealed class PointAtTargetCoordinatorTests
     {
         await using var harness = CoordinatorHarness.Create();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var firstRequester = harness.CreateProbe("first-requester");
-        var secondRequester = harness.CreateProbe("second-requester");
 
-        harness.Coordinator.Tell(new PointAtTarget(), firstRequester.Ref);
+        var firstResult = harness.Coordinator.Ask<PointAtTargetResult>(
+            new PointAtTarget(),
+            cancellationToken);
         var first =
-            await harness.PointerUi.ExpectMsgAsync<ExecutePointAtTarget>(
-                cancellationToken: cancellationToken);
+            await harness.PointerUi.ExpectMsgAsync<
+                PointerUiCommands.ExecutePointAtTarget>(
+                    cancellationToken: cancellationToken);
         harness.Coordinator.Tell(
             new PointAtTargetExecuted(first.ActionId),
             harness.PointerUi.Ref);
-        _ = await harness.Kanata.ExpectMsgAsync<RestoreBaseLayer>(
-            cancellationToken: cancellationToken);
-        harness.Coordinator.Tell(new BaseLayerActive(), harness.Kanata.Ref);
-        _ = await firstRequester.ExpectMsgAsync<PointAtTargetCompleted>(
-            cancellationToken: cancellationToken);
-
-        harness.Coordinator.Tell(new PointAtTarget(), secondRequester.Ref);
-        var second =
-            await harness.PointerUi.ExpectMsgAsync<ExecutePointAtTarget>(
+        _ = await harness.Kanata.ExpectMsgAsync<
+            KanataCommands.RestoreBaseLayer>(
                 cancellationToken: cancellationToken);
+        harness.Coordinator.Tell(new BaseLayerActive(), harness.Kanata.Ref);
+        _ = Assert.IsType<PointAtTargetCompleted>(await firstResult);
+
+        var secondResult = harness.Coordinator.Ask<PointAtTargetResult>(
+            new PointAtTarget(),
+            cancellationToken);
+        var second =
+            await harness.PointerUi.ExpectMsgAsync<
+                PointerUiCommands.ExecutePointAtTarget>(
+                    cancellationToken: cancellationToken);
         Assert.NotEqual(first.ActionId, second.ActionId);
 
         harness.Coordinator.Tell(
@@ -120,10 +137,11 @@ public sealed class PointAtTargetCoordinatorTests
             new PointAtTarget(),
             harness.PointerUi.Ref);
 
-        _ = await harness.PointerUi.ExpectMsgAsync<PointAtTargetBusy>(
+        _ = await harness.PointerUi.ExpectMsgAsync<PointAtTargetAlreadyActive>(
             cancellationToken: cancellationToken);
-        _ = await harness.Kanata.ExpectMsgAsync<RestoreBaseLayer>(
-            cancellationToken: cancellationToken);
+        _ = await harness.Kanata.ExpectMsgAsync<
+            KanataCommands.RestoreBaseLayer>(
+                cancellationToken: cancellationToken);
         await harness.Kanata.ExpectNoMsgAsync(
             TimeSpan.Zero,
             cancellationToken);
@@ -131,8 +149,7 @@ public sealed class PointAtTargetCoordinatorTests
         harness.Coordinator.Tell(new BaseLayerActive(), harness.Kanata.Ref);
 
         var completed =
-            await secondRequester.ExpectMsgAsync<PointAtTargetCompleted>(
-                cancellationToken: cancellationToken);
+            Assert.IsType<PointAtTargetCompleted>(await secondResult);
         Assert.Equal(second.ActionId, completed.ActionId);
         Assert.Equal(PointAtTargetOutcome.Pointed, completed.Outcome);
     }
@@ -145,8 +162,9 @@ public sealed class PointAtTargetCoordinatorTests
         var requester = harness.CreateProbe("requester");
 
         harness.Coordinator.Tell(new PointAtTarget(), requester.Ref);
-        _ = await harness.PointerUi.ExpectMsgAsync<ExecutePointAtTarget>(
-            cancellationToken: cancellationToken);
+        _ = await harness.PointerUi.ExpectMsgAsync<
+            PointerUiCommands.ExecutePointAtTarget>(
+                cancellationToken: cancellationToken);
 
         harness.Coordinator.Tell(
             new PointAtTargetExecuted(default),
@@ -165,8 +183,9 @@ public sealed class PointAtTargetCoordinatorTests
         var requester = harness.CreateProbe("requester");
 
         harness.Coordinator.Tell(new PointAtTarget(), requester.Ref);
-        _ = await harness.PointerUi.ExpectMsgAsync<ExecutePointAtTarget>(
-            cancellationToken: cancellationToken);
+        _ = await harness.PointerUi.ExpectMsgAsync<
+            PointerUiCommands.ExecutePointAtTarget>(
+                cancellationToken: cancellationToken);
 
         harness.Coordinator.Tell(Kill.Instance);
 

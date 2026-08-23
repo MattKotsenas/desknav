@@ -3,23 +3,41 @@ namespace Desknav.ControlPlane.Tests;
 public sealed class PointAtTargetLifecycleTests
 {
     [Fact]
+    public void StartWhileActiveRejectsWithoutChangingState()
+    {
+        var active = PointAtTargetLifecycle.Initial.Start().Lifecycle;
+        Assert.IsType<PointAtTargetLifecycle.States.AwaitingResult>(
+            active.Phase);
+
+        var overlap = active.Start();
+
+        Assert.Same(active, overlap.Lifecycle);
+        _ = Assert.IsType<
+            PointAtTargetLifecycle.Effects.RejectAlreadyActive>(
+                overlap.Effect);
+    }
+
+    [Fact]
     public void StaleResultLeavesTheCurrentActionUnchanged()
     {
         var lifecycle = PointAtTargetLifecycle.Initial;
-        Assert.IsType<IdlePointAtTarget>(lifecycle.Phase);
+        Assert.IsType<PointAtTargetLifecycle.States.Idle>(lifecycle.Phase);
 
         var firstStart = lifecycle.Start();
         var firstExecute =
-            Assert.IsType<ExecutePointAtTargetEffect>(firstStart.Effect);
+            Assert.IsType<PointAtTargetLifecycle.Effects.ExecutePointAtTarget>(
+                firstStart.Effect);
         var firstResult = firstStart.Lifecycle.Pointed(firstExecute.ActionId);
-        _ = Assert.IsType<RestoreBaseLayerEffect>(firstResult.Effect);
+        _ = Assert.IsType<PointAtTargetLifecycle.Effects.RestoreBaseLayer>(
+            firstResult.Effect);
         var firstCompletion = firstResult.Lifecycle.BaseLayerActive();
-        _ = Assert.IsType<CompletePointAtTargetEffect>(
+        _ = Assert.IsType<PointAtTargetLifecycle.Effects.Complete>(
             firstCompletion.Effect);
 
         var secondStart = firstCompletion.Lifecycle.Start();
         var secondExecute =
-            Assert.IsType<ExecutePointAtTargetEffect>(secondStart.Effect);
+            Assert.IsType<PointAtTargetLifecycle.Effects.ExecutePointAtTarget>(
+                secondStart.Effect);
         Assert.NotEqual(firstExecute.ActionId, secondExecute.ActionId);
         var beforeStaleResult = secondStart.Lifecycle;
 
@@ -31,9 +49,10 @@ public sealed class PointAtTargetLifecycleTests
 
         var currentResult =
             staleResult.Lifecycle.Pointed(secondExecute.ActionId);
-        _ = Assert.IsType<RestoreBaseLayerEffect>(currentResult.Effect);
+        _ = Assert.IsType<PointAtTargetLifecycle.Effects.RestoreBaseLayer>(
+            currentResult.Effect);
         var restoring =
-            Assert.IsType<RestoringPointAtTarget>(
+            Assert.IsType<PointAtTargetLifecycle.States.RestoringBaseLayer>(
                 currentResult.Lifecycle.Phase);
         Assert.Equal(secondExecute.ActionId, restoring.ActionId);
         Assert.Equal(PointAtTargetOutcome.Pointed, restoring.Outcome);
