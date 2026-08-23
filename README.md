@@ -1,9 +1,10 @@
 # desknav
 
 desknav is a keyboard-first Windows desktop navigation system. The repository
-provides a native Kanata pointer layer and its simulator behavior suite. Its
-architecture defines the control plane, Desknav UI, Komorebi, and UI
-Automation boundaries that compose the complete system.
+provides a native Kanata pointer layer and a headless `PointAtTarget` control
+plane with deterministic behavior suites. Its architecture defines the
+Desknav UI, Komorebi, and UI Automation boundaries that compose the complete
+system.
 
 ## Repository guide
 
