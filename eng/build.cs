@@ -1,9 +1,10 @@
 const string installTarget = "Install-Kanata-Simulator";
 const string testTarget = "Test";
+const string allTarget = "All";
 const string kanataV1_11_0Revision =
     "4e6bec4d52d044bd13cfa01cea4e02dc2d246c65";
 
-var target = Argument("target", testTarget);
+var target = Argument("target", allTarget);
 
 Task(installTarget)
     .Does(() =>
@@ -65,5 +66,8 @@ Task(testTarget)
             $"Tests failed with exit code {exitCode}.");
     }
 });
+
+Task(allTarget)
+    .IsDependentOn(testTarget);
 
 RunTarget(target);

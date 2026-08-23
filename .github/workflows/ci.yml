@@ -23,8 +23,8 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Test
+      - name: Verify
         uses: cake-build/cake-action@d218f1133bb74a1df0b08c89cfd8fc100c09e1a0 # v3.0.1
         with:
           project-path: eng/build.csproj
-          target: Test
+          target: All
