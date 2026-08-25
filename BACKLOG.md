@@ -14,50 +14,59 @@ Done when Windows acceptance proves startup, restart, rollback, and live
 pointer movement from the pinned artifact, with any replaced movement path
 removed or explicitly gated.
 
-## 2. Route semantic actions through the control plane so each action has one owner
+## 2. Interpret command gestures through one control-plane workflow
 
-Wire complete semantic intents from Kanata into the control plane. Route one
-semantic action through the control plane to a component. Complete the action
-with an observable outcome and confirmed Kanata restoration.
+Wire Kanata command-mode generations and recognized gesture tokens into one
+control-plane coordinator. Route target discovery to its boundary owner.
+Target discovery follows the cancellation and supersession contract in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
-Done when deterministic integration tests exercise intent ingress and the
-component boundary, and prove that a result cannot complete an action other
-than the one that requested it. One case times out an action, starts a later
-action while the component remains connected, and then delivers the earlier
-action's result. Another ends an action on disconnect, restarts its component,
-starts a later action, and then delivers the earlier result. The tests confirm
-Kanata restoration for every outcome.
+Done when deterministic scenarios prove that a current discovery result
+produces current presentation, Escape before completion produces no
+presentation, cancellation is dispatched before a superseding request, and
+obsolete results cannot advance the later workflow. A separate scenario
+withholds overlay and Komorebi cleanup after command-mode exit, observes
+Kanata in passthrough, and proves that the next ordinary key reaches Windows.
 
 ## 3. Present visible targets so the user can choose a desktop action
 
-Add Desknav UI overlays, read-only target discovery, and explicitly selected
-point or activation actions. The control plane retains ownership of the
-semantic action while the UI owns presentation and the selected one-shot
-effect.
+Implement the target-selection workflow defined in
+[ARCHITECTURE.md](ARCHITECTURE.md) with live target discovery, overlay
+presentation, and point or activation operations.
 
 Done when Windows acceptance proves point without activation, explicit
 activation, cancellation after targets appear, focus change before the
-one-shot action, and no stale overlay or command character.
+one-shot action, no stale overlay or command character, and no mismatch
+between a visible label and the target it selects. Deterministic scenarios
+deliver a stale presentation revision from an older workflow and prove labels
+remain inactive, then deliver the matching current revision and prove labels
+become active. A label captured for the older revision remains inactive after
+the newer revision becomes current, while a label captured for the current
+revision selects from that target map. Other scenarios lose a pointer result
+after dispatch and prove a conflicting pointer operation waits for the
+boundary to fence the ambiguous one.
 
-## 4. Route by focused context so one intent produces the defined desktop result
+## 4. Route by focused context so one command produces the defined desktop result
 
-Select the component that can deliver the intent's defined result in the
-observed focus context. Komorebi, Desknav UI, and UI Automation report their
-capabilities and refusals; the control plane owns the routing decision.
+Implement the focus-context routing defined in
+[ARCHITECTURE.md](ARCHITECTURE.md) across Komorebi, Desknav UI, and UI
+Automation.
 
 Done when behavior and Windows acceptance tests cover eligible and ineligible
 desktop states, context changes during routing, explicit refusal, and the
 absence of silent fallback to a different result.
 
-## 5. Define runtime failure outcomes so recovery never replays an action
+## 5. Define runtime failure outcomes so recovery respects each operation
 
 Handle the expected failure events defined in
-[ARCHITECTURE.md](ARCHITECTURE.md) while distinguishing a refusal from an
-action whose external outcome is unknown. Stop the application after
-unexpected action-owner failure.
+[ARCHITECTURE.md](ARCHITECTURE.md). Add boundary-local cancellation,
+desired-state revisions, process and connection identities, and
+operation-specific recovery.
 
 Done when Windows acceptance covers timeout, explicit component refusal,
-outcome unknown, disconnect, repeated restoration, and restarts of Kanata,
+outcome unknown, disconnect, superseded mode changes, and restarts of Kanata,
 Desknav UI, and Komorebi. A separate acceptance case proves that unexpected
-action-owner failure stops the application without replaying an ambiguous
-one-shot action.
+owner failure stops the application without repeating an ambiguous effect.
+For every terminal path whose policy leaves command mode, tests withhold
+unrelated cleanup, observe Kanata in passthrough, and prove the next ordinary
+key reaches Windows.
