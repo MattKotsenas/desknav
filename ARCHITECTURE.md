@@ -35,9 +35,9 @@ context.
 
 ### Workflows and boundaries each have one owner
 
-One control-plane coordinator owns the logical navigation workflow. The
-target-discovery, overlay, pointer, keyboard-mode, and Komorebi boundaries
-each have one owner.
+One local control-plane coordinator owns the logical navigation workflow. The
+target-discovery, overlay, one-shot-action, keyboard-mode, and Komorebi
+boundaries each have one owner.
 
 When Kanata is in passthrough, control-plane and boundary work never delays
 ordinary keyboard input. Unfinished work may delay only a later operation
@@ -85,35 +85,52 @@ boundary from policy.
 
 Kanata is the only keyboard hook. It owns keyboard layers, continuous pointer
 movement, wheel input, physical button taps, and physical gesture timing.
-During command input it stamps forwarded gestures with the command-mode
-generation in which they were captured and reports its actual mode.
+No other Desknav component acquires raw physical input or polls key, button, or
+device state. The control plane accepts physical-gesture ingress only through
+Kanata's delegated-gesture protocol. Passthrough gestures produce no
+control-plane-observable event.
+Kanata allocates a new command-mode generation whenever it enters delegated
+command input, reports that generation with its actual mode, and stamps
+forwarded gestures with the generation active at capture. The keyboard-mode
+owner reconciles the coordinator's desired mode and active presentation
+revision with Kanata.
 
 ### Control plane
 
 The control plane owns focus-context routing, navigation workflow state,
-outcomes, and desired external state. One coordinator serializes workflow
-decisions. It rejects obsolete input and results before they can affect the
-current workflow.
+outcomes, and desired external state. One local coordinator serializes
+workflow decisions. It rejects obsolete input and results before they can
+affect the current workflow.
+
+The coordinator allocates a workflow generation whenever it starts a logical
+navigation workflow. That coordinator-local identity scopes workflow state.
+Boundary request and operation identities map results back to a workflow
+generation but do not substitute for it.
 
 ### Desknav UI
 
-Desknav UI hosts presentation and one-shot pointer boundaries. Its overlay
+Desknav UI hosts presentation and one-shot-action boundaries. Its overlay
 owner atomically replaces older presentation with the current labeled scene.
-Its pointer owner serializes explicitly requested point or coordinate-
-activation operations. Neither boundary captures the keyboard or owns the
-navigation workflow.
+Its one-shot-action owner serializes explicitly requested point, UIA
+activation, or foreground coordinate-activation operations. Neither boundary
+captures the keyboard or owns the navigation workflow.
 
 ### Komorebi
 
 Komorebi is an external window manager. Desknav requests defined window
-effects and reconciles Komorebi's observable state.
+effects through one Komorebi owner. That owner serializes effects, observes
+Komorebi state, and reconciles external state to the latest desired-state
+revision accepted from the coordinator after completion, reconnect, and
+restart. It reports observations and operation outcomes to the coordinator,
+which alone decides their workflow meaning.
 
 ### UI Automation
 
 UI Automation is an external Windows interface for observing and acting on
 accessible desktop elements. The target-discovery owner schedules and cancels
-UIA work, reports snapshots with their request identity, and never sends
-discovery results directly to presentation.
+read-only UIA work, reports snapshots with their request identity, and never
+sends discovery results directly to presentation. Explicit UIA actions belong
+to the one-shot-action owner and carry an operation identity.
 
 ## Interaction paths
 
@@ -132,15 +149,21 @@ sequenceDiagram
     participant C as Control plane
     participant D as Target discovery owner
     participant O as Overlay owner
-    participant P as Pointer owner
+    participant M as Keyboard-mode owner
+    participant A as One-shot-action owner
 
     K->>C: Command gesture (mode generation)
     C->>D: Discover targets (request ID)
     D-->>C: Target snapshot (request ID)
     C->>O: Present labeled scene (presentation revision)
+    O-->>C: Scene active (presentation revision)
+    C->>M: Activate labels (mode generation, presentation revision)
+    M->>K: Reconcile mode and active revision
+    K-->>M: Observed mode and active revision
+    M-->>C: Mode observation (mode generation, presentation revision)
     K->>C: Label gesture (mode and presentation revision)
-    C->>P: One-shot pointer operation (operation ID)
-    P-->>C: Operation outcome (operation ID)
+    C->>A: One-shot action (operation ID)
+    A-->>C: Operation outcome (operation ID)
 ```
 
 Escape changes the coordinator state immediately and explicitly cancels
@@ -149,10 +172,13 @@ the cancellation before the new request without waiting for cancellation to
 finish. Late results retain their request identity and cannot produce current
 presentation or advance a later workflow.
 
-After the overlay confirms a presentation revision, label gestures are
-captured with that revision. The control plane accepts a label only when its
-presentation revision matches the current target map. A gesture captured for
-a stale scene cannot select from a newer one.
+The coordinator allocates and owns the presentation revision. After the
+overlay owner confirms that revision is rendered, the coordinator directs the
+keyboard-mode owner to make it active in Kanata. Kanata stamps label gestures
+with the active revision at capture. The coordinator accepts a label only when
+its revision matches the current confirmed target map and clears the active
+revision when it invalidates that map. A gesture captured for a stale scene
+cannot select from a newer one.
 
 Overlay, Komorebi, and other cleanup follow command-mode exit independently.
 A later workflow may begin while old cleanup remains in flight; boundary
@@ -166,23 +192,35 @@ process and connection lifetimes are not interchangeable. Each logical state
 has one writer, and each boundary rejects stale work using its protocol's
 identities.
 
+Cross-process messages identify the sender process lifetime, connection
+lifetime, and a monotonic connection-local sequence when transport order
+matters. A transport sequence restarts only with a new connection identity and
+never identifies semantic work. Boundary owners reject prior-lifetime and
+out-of-order messages before semantic identities are evaluated.
+
 ## Failure and recovery
 
-Expected timeouts, refusals, disconnects, and restarts of Kanata, Desknav UI,
-or Komorebi are events handled by the control plane. They produce an explicit
-outcome and recovery path.
+Boundary owners translate expected timeouts, refusals, disconnects, and
+restarts of Kanata, Desknav UI, or Komorebi into observations and operation
+outcomes. The coordinator handles their workflow meaning. Each expected
+failure has an explicit outcome and recovery path.
 
 A refusal, or a cancellation confirmed before dispatch, is known not to have
 produced its requested effect. If a one-shot operation may have occurred but
 its result is lost, its outcome is unknown.
 
 Retry policy belongs to the operation. Read-only work and current desired
-state may be repeated. An ambiguous one-shot effect is not replayed unless
-that operation's policy proves retry remains safe.
+state may be repeated. A dispatched one-shot action whose outcome is unknown
+is never redispatched. Reconciliation of current desired state is not a replay
+of that action.
 
-Boundary owners fence ambiguous or still-running work before accepting a
-conflicting operation. They reconcile their latest desired state after
-completion, cancellation, reconnect, and restart.
+The one-shot-action owner fences ambiguous or still-running work before
+accepting a conflicting operation. Its operation policy has a bounded recovery
+path: establish a safe fence and dispatch the conflict, or explicitly refuse
+it. Other boundary owners retain the latest desired-state revision accepted
+from the coordinator and reconcile external state to that replica after
+completion, cancellation, reconnect, and restart. They do not author desired
+state.
 
 An unexpected failure of the coordinator or a boundary owner stops the
 application. Restarting must reconcile observable state and must not replay
@@ -192,6 +230,12 @@ an ambiguous one-shot operation.
 
 Verification exercises message ordering and the observable desktop result at
 the lowest boundary that can prove each contract.
+
+Ordinary-key passthrough acceptance holds conflicting boundary work unfinished
+and requires delivery within the VM latency bound established by direct
+Kanata-to-Windows passthrough. Artifact inspection proves ordinary passthrough
+mappings do not route through the control plane, and VM acceptance proves
+delivery while control-plane IPC is unavailable.
 
 Hardware input, live desktop state, UI Automation, and visual overlays require
 acceptance testing in an isolated Windows VM because simulators cannot prove

@@ -11,8 +11,18 @@ behavior. Deployment owns provisioning and lifecycle; this repository owns
 the artifact's runtime behavior.
 
 Done when Windows acceptance proves startup, restart, rollback, and live
-pointer movement from the pinned artifact, with any replaced movement path
-removed or explicitly gated.
+pointer movement from the pinned artifact. Deployment inspection proves Kanata
+is the only running keyboard hook and continuous pointer provider, and any
+replaced path cannot run concurrently. A repository check proves that Desknav
+production code does not reference keyboard-hook, raw-input, HID, key-state,
+or alternate continuous-pointer APIs. Generated-artifact inspection proves
+ordinary passthrough mappings emit directly through Kanata without a
+control-plane round trip. With control-plane IPC unavailable, Windows
+acceptance proves held movement, wheel input, and physical button taps still
+flow directly through Kanata. A closed ingress check proves production
+physical-gesture input can enter the control plane only through Kanata's
+delegated-gesture protocol. With IPC active, passthrough gestures produce no
+control-plane-observable traffic or state change through any channel.
 
 ## 2. Interpret command gestures through one control-plane workflow
 
@@ -22,29 +32,53 @@ Target discovery follows the cancellation and supersession contract in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Done when deterministic scenarios prove that a current discovery result
-produces current presentation, Escape before completion produces no
-presentation, cancellation is dispatched before a superseding request, and
-obsolete results cannot advance the later workflow. A separate scenario
-withholds overlay and Komorebi cleanup after command-mode exit, observes
-Kanata in passthrough, and proves that the next ordinary key reaches Windows.
+causes the coordinator to issue the current revisioned presentation request,
+Escape before completion issues discovery cancellation and no presentation
+request, cancellation is dispatched before a superseding request, and
+obsolete results cannot advance the later workflow. A gesture captured in a
+prior command-mode generation produces no boundary request after a newer
+generation becomes active. The Escape scenario withholds cancellation
+completion after observing dispatch, observes Kanata in passthrough, and
+then makes control-plane IPC unavailable. The next ordinary key still reaches
+Windows within the direct-passthrough acceptance bound. Architecture tests
+prove workflow state is confined to coordinator policy, workflow requests to
+boundary owners originate with the coordinator, and sibling boundary owners
+cannot command one another. Each external adapter is accessible only to its
+designated boundary owner.
 
 ## 3. Present visible targets so the user can choose a desktop action
 
 Implement the target-selection workflow defined in
 [ARCHITECTURE.md](ARCHITECTURE.md) with live target discovery, overlay
-presentation, and point or activation operations.
+presentation, and point, UIA activation, or coordinate-activation operations.
 
 Done when Windows acceptance proves point without activation, explicit
 activation, cancellation after targets appear, focus change before the
 one-shot action, no stale overlay or command character, and no mismatch
 between a visible label and the target it selects. Deterministic scenarios
-deliver a stale presentation revision from an older workflow and prove labels
-remain inactive, then deliver the matching current revision and prove labels
-become active. A label captured for the older revision remains inactive after
-the newer revision becomes current, while a label captured for the current
-revision selects from that target map. Other scenarios lose a pointer result
-after dispatch and prove a conflicting pointer operation waits for the
-boundary to fence the ambiguous one.
+deliver a stale overlay confirmation from an older workflow and prove no label
+revision becomes active, then deliver the matching current confirmation and
+prove the revision becomes active. Kanata simulation proves each label gesture
+carries the revision active at capture. A label captured for an older active
+revision remains inactive after a newer revision becomes current, while a
+label captured for the current revision selects from that target map. After
+Escape invalidates a confirmed target map, a late label captured for that map
+produces no one-shot-action request. Another scenario holds an older overlay
+render, activates a newer scene, releases the old render, and proves the newer
+scene remains visible. A separate scenario proves the same newer-wins result
+for delayed cleanup. With current overlay cleanup withheld after command-mode
+exit, Kanata still reaches observed passthrough and the next ordinary key
+reaches Windows within the direct-passthrough acceptance bound.
+
+One-shot-action scenarios lose a UIA or pointer result after dispatch and prove
+the executor records exactly one dispatch for that logical action across every
+exercised recovery path and operation identity. A conflicting operation waits
+while the effect is ambiguous, while an unrelated target-discovery and
+presentation workflow completes. Within the operation's recovery budget, the
+owner establishes a safe fence and dispatches the conflict, or gives it an
+explicit terminal refusal. Command-mode exit also reaches observed Kanata
+passthrough and the next ordinary key reaches Windows within the direct-
+passthrough acceptance bound while the action fence remains unresolved.
 
 ## 4. Route by focused context so one command produces the defined desktop result
 
@@ -54,7 +88,13 @@ Automation.
 
 Done when behavior and Windows acceptance tests cover eligible and ineligible
 desktop states, context changes during routing, explicit refusal, and the
-absence of silent fallback to a different result.
+absence of silent fallback to a different result. With Komorebi reconciliation
+withheld after command-mode exit, Kanata still reaches observed passthrough and
+the next ordinary key reaches Windows within the direct-passthrough acceptance
+bound. Another scenario holds an older Komorebi effect, establishes newer
+desired state, releases the older completion, and proves observable state
+reconciles to the newer revision. A Komorebi operation also completes while an
+unrelated one-shot-action fence remains unresolved.
 
 ## 5. Define runtime failure outcomes so recovery respects each operation
 
@@ -67,6 +107,22 @@ Done when Windows acceptance covers timeout, explicit component refusal,
 outcome unknown, disconnect, superseded mode changes, and restarts of Kanata,
 Desknav UI, and Komorebi. A separate acceptance case proves that unexpected
 owner failure stops the application without repeating an ambiguous effect.
-For every terminal path whose policy leaves command mode, tests withhold
-unrelated cleanup, observe Kanata in passthrough, and prove the next ordinary
-key reaches Windows.
+After reconnect or restart, deterministic scenarios deliver messages from the
+prior process and connection lifetimes plus out-of-order messages from the
+current connection, and prove they cannot affect current semantic work. A
+valid current-connection envelope carrying an obsolete request or operation
+identity is also rejected. A current-lifetime message carrying the current
+semantic identity then completes the current work. For every stateful boundary
+owner, a valid current-connection message carrying an older desired-state
+revision after a newer one is rejected. Reconnect and restart scenarios cover
+both quiescent and in-flight state, resolve the in-flight work according to its
+operation policy, and restore observable external state to the latest accepted
+desired-state revision.
+
+A dispatched one-shot action whose result is lost is not dispatched again
+during any timeout, reconnect, or restart recovery under any operation
+identity. Composition tests prove exactly one runtime command recipient and
+writer exists for each boundary. Architecture tests prove each boundary owner
+owns its boundary-work scheduling and no synchronization gate spans owners.
+The boundary-specific passthrough scenarios from milestones 2 through 4 run
+for every terminal path whose policy leaves command mode.
