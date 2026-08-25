@@ -4,49 +4,40 @@ This file records future work in priority order. Delete an item when its
 outcome is complete. [ARCHITECTURE.md](ARCHITECTURE.md) remains the source of
 truth for system shape.
 
-## 1. Package runtime behavior so deployed configuration matches tested source
-
-Produce a pinned Desknav artifact as the single production source for Kanata
-behavior. Deployment owns provisioning and lifecycle; this repository owns
-the artifact's runtime behavior.
-
-Done when Windows acceptance proves startup, restart, rollback, and live
-pointer movement from the pinned artifact. Deployment inspection proves Kanata
-is the only running keyboard hook and continuous pointer provider, and any
-replaced path cannot run concurrently. A repository check proves that Desknav
-production code does not reference keyboard-hook, raw-input, HID, key-state,
-or alternate continuous-pointer APIs. Generated-artifact inspection proves
-ordinary passthrough mappings emit directly through Kanata without a
-control-plane round trip. With control-plane IPC unavailable, Windows
-acceptance proves held movement, wheel input, and physical button taps still
-flow directly through Kanata. A closed ingress check proves production
-physical-gesture input can enter the control plane only through Kanata's
-delegated-gesture protocol. With IPC active, passthrough gestures produce no
-control-plane-observable traffic or state change through any channel.
-
-## 2. Interpret command gestures through one control-plane workflow
+## 1. Interpret command gestures through one control-plane workflow
 
 Wire Kanata command-mode generations and recognized gesture tokens into one
 control-plane coordinator. Route target discovery to its boundary owner.
 Target discovery follows the cancellation and supersession contract in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Done when deterministic scenarios prove that a current discovery result
-causes the coordinator to issue the current revisioned presentation request,
-Escape before completion issues discovery cancellation and no presentation
-request, cancellation is dispatched before a superseding request, and
-obsolete results cannot advance the later workflow. A gesture captured in a
-prior command-mode generation produces no boundary request after a newer
-generation becomes active. The Escape scenario withholds cancellation
-completion after observing dispatch, observes Kanata in passthrough, and
-then makes control-plane IPC unavailable. The next ordinary key still reaches
-Windows within the direct-passthrough acceptance bound. Architecture tests
-prove workflow state is confined to coordinator policy, workflow requests to
-boundary owners originate with the coordinator, and sibling boundary owners
-cannot command one another. Each external adapter is accessible only to its
-designated boundary owner.
+Done when a deterministic scenario begins in the current delegated command
+mode, injects a recognized current-generation gesture through the production
+Kanata delegated-gesture protocol boundary, and observes the coordinator issue
+the corresponding target-discovery request. A current discovery result causes
+the coordinator to issue the current revisioned presentation request. Escape
+before completion issues discovery cancellation and no presentation request.
+The supersession scenario withholds cancellation completion, observes
+cancellation dispatch followed by the superseding request, and only then
+releases cancellation completion. Obsolete results cannot advance the later
+workflow. A gesture captured in a prior command-mode generation produces no
+boundary request after a newer generation becomes active. The Escape scenario
+withholds cancellation completion after observing dispatch, observes Kanata in
+passthrough, and then makes control-plane IPC unavailable. The next ordinary
+key still reaches Windows within the direct-passthrough acceptance bound.
+Architecture tests prove workflow state is confined to coordinator policy,
+workflow requests to boundary owners originate with the coordinator, and
+sibling boundary owners cannot command one another. Each external adapter is
+accessible only to its designated boundary owner. A repository check proves
+Desknav production code does not reference keyboard-hook, raw-input, HID,
+key-state, or alternate continuous-pointer APIs. A closed-ingress check proves
+physical gestures can enter the control plane only through Kanata's
+delegated-gesture protocol. With control-plane IPC unavailable, Windows
+acceptance proves held movement, wheel input, and physical button taps still
+flow directly through Kanata. With IPC active, passthrough gestures produce no
+control-plane-observable traffic or state change through any channel.
 
-## 3. Present visible targets so the user can choose a desktop action
+## 2. Present visible targets so the user can choose a desktop action
 
 Implement the target-selection workflow defined in
 [ARCHITECTURE.md](ARCHITECTURE.md) with live target discovery, overlay
@@ -80,7 +71,7 @@ explicit terminal refusal. Command-mode exit also reaches observed Kanata
 passthrough and the next ordinary key reaches Windows within the direct-
 passthrough acceptance bound while the action fence remains unresolved.
 
-## 4. Route by focused context so one command produces the defined desktop result
+## 3. Route by focused context so one command produces the defined desktop result
 
 Implement the focus-context routing defined in
 [ARCHITECTURE.md](ARCHITECTURE.md) across Komorebi, Desknav UI, and UI
@@ -96,12 +87,12 @@ desired state, releases the older completion, and proves observable state
 reconciles to the newer revision. A Komorebi operation also completes while an
 unrelated one-shot-action fence remains unresolved.
 
-## 5. Define runtime failure outcomes so recovery respects each operation
+## 4. Complete runtime failure outcomes so recovery respects each operation
 
 Handle the expected failure events defined in
-[ARCHITECTURE.md](ARCHITECTURE.md). Add boundary-local cancellation,
+[ARCHITECTURE.md](ARCHITECTURE.md). Apply boundary-local cancellation,
 desired-state revisions, process and connection identities, and
-operation-specific recovery.
+operation-specific recovery across every external boundary.
 
 Done when Windows acceptance covers timeout, explicit component refusal,
 outcome unknown, disconnect, superseded mode changes, and restarts of Kanata,
@@ -124,5 +115,20 @@ during any timeout, reconnect, or restart recovery under any operation
 identity. Composition tests prove exactly one runtime command recipient and
 writer exists for each boundary. Architecture tests prove each boundary owner
 owns its boundary-work scheduling and no synchronization gate spans owners.
-The boundary-specific passthrough scenarios from milestones 2 through 4 run
-for every terminal path whose policy leaves command mode.
+The delegated-gesture, target-selection, and focused-context passthrough
+scenarios above run for every terminal path whose policy leaves command mode.
+
+## 5. Publish dogfoodable behavior for a deployment consumer
+
+Publish a deterministic artifact under the
+[artifact and deployment ownership](ARCHITECTURE.md#artifact-production-and-deployment-have-separate-owners)
+contract.
+
+Done when repository verification reproduces the artifact, verifies its
+identity and exact contents against tested source, and proves its ordinary
+passthrough mappings emit directly through Kanata without a control-plane
+round trip. The deployment consumer's cross-repository acceptance identifies
+and exercises that artifact and proves startup, restart, genuine rollback
+between distinct artifacts, live pointer behavior, that the artifact's Kanata
+path is the sole active keyboard hook and continuous-pointer provider, and
+that Mousemaster and prior artifact versions are not running.
