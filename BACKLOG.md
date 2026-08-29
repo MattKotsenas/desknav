@@ -6,25 +6,27 @@ truth for system shape.
 
 ## 1. Interpret command gestures through one control-plane workflow
 
-Wire stock Kanata's progressive layer observations and recognized gesture
-tokens into one control-plane coordinator. Route target discovery to its
-boundary owner. Target discovery follows the cancellation and supersession
-contract in [ARCHITECTURE.md](ARCHITECTURE.md).
+Wire stock Kanata's `base`, `command`, and direct `pointer` layer observations
+plus recognized gesture tokens into one control-plane coordinator. The
+coordinator owns command-prefix progress and semantic lifetime. Route target
+discovery to its boundary owner. Target discovery follows the cancellation
+and supersession contract in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Done when a deterministic scenario sends the production `CAP Space f` layer
-and gesture frames through the stock Kanata TCP boundary and observes the
-coordinator issue the corresponding target-discovery request. Progressive
-mode observations remain available to presentation without determining
-semantic meaning. A current discovery result causes the coordinator to issue
-the current revisioned presentation request. Escape before completion issues
-discovery cancellation and no presentation request. The supersession scenario
-withholds cancellation completion, observes cancellation dispatch followed by
-the superseding request, and only then releases cancellation completion.
-Obsolete results cannot advance the later workflow. A disconnect invalidates
-the observed keyboard mode. The Escape scenario withholds cancellation
-completion after observing dispatch, observes Kanata in passthrough, and then
-makes control-plane IPC unavailable. The next ordinary key still reaches
-Windows within the direct-passthrough acceptance bound.
+Done when `CAP f d f d f l` produces an ordered command-token stream without
+changing the `command` layer, and `CAP Space f` changes
+`command → pointer → command` while issuing the corresponding target-discovery
+request. Direct held pointer input remains local. A current discovery result
+causes the coordinator to issue the current revisioned presentation request.
+Escape returns Kanata to `base` locally, clears command progress, issues
+discovery cancellation, and produces no presentation request. The supersession
+scenario withholds cancellation completion, observes cancellation dispatch
+followed by the superseding request, and only then releases cancellation
+completion. Obsolete results cannot advance the later workflow. A disconnect
+invalidates the observed keyboard layer and command progress. The Escape
+scenario withholds cancellation completion after observing dispatch, observes
+Kanata in passthrough, and then makes control-plane IPC unavailable. The next
+ordinary key still reaches Windows within the direct-passthrough acceptance
+bound.
 Architecture tests prove workflow state is confined to coordinator policy,
 workflow requests to boundary owners originate with the coordinator, and
 sibling boundary owners cannot command one another. Each external adapter is

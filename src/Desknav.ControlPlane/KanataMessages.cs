@@ -46,17 +46,21 @@ public sealed record GestureToken
     public string Key { get; }
 }
 
-public sealed record KeyboardModeObserved(
+public sealed record KeyboardLayerObserved(
     KanataConnectionId ConnectionId,
     KanataFrameSequence Sequence,
     KeyboardLayer Layer);
 
-public sealed record KeyboardModeUnavailable(KanataConnectionId ConnectionId);
+public sealed record KeyboardLayerUnavailable(KanataConnectionId ConnectionId);
 
 public sealed record GestureObserved(
     KanataConnectionId ConnectionId,
     KanataFrameSequence Sequence,
     GestureToken Token);
+
+public sealed record CommandInputObserved(GestureToken Token);
+
+public sealed record CommandSessionEnded;
 
 [ValueObject<Guid>(conversions: Conversions.None)]
 public readonly partial struct TargetDiscoveryRequestId

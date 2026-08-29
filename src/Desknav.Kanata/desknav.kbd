@@ -5,7 +5,7 @@
 )
 
 (defsrc
-  caps spc esc f h j k l
+  caps spc esc f d h j k l
 )
 
 (defvar
@@ -16,25 +16,26 @@
 )
 
 (deflayermap (base)
-  caps (layer-switch wm)
+  caps (layer-switch command)
 )
 
-(deflayermap (wm)
+(deflayermap (command)
   caps (layer-switch base)
-  spc (layer-switch pointer)
-  esc (layer-switch base)
-  f (multi f (layer-switch base))
-  h (multi h (layer-switch base))
-  j (multi j (layer-switch base))
-  k (multi k (layer-switch base))
-  l (multi l (layer-switch base))
+  spc (multi (push-msg gesture command spc) (layer-switch pointer))
+  esc (multi (push-msg gesture command esc) (layer-switch base))
+  f (push-msg gesture command f)
+  d (push-msg gesture command d)
+  h (push-msg gesture command h)
+  j (push-msg gesture command j)
+  k (push-msg gesture command k)
+  l (push-msg gesture command l)
 )
 
 (deflayermap (pointer)
   caps (layer-switch base)
-  esc (layer-switch base)
+  esc (multi (push-msg gesture pointer esc) (layer-switch base))
   spc XX
-  f (multi (push-msg gesture pointer f) (layer-switch base))
+  f (multi (push-msg gesture pointer f) (layer-switch command))
   h @left
   j @down
   k @up

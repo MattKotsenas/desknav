@@ -28,7 +28,7 @@ public sealed class KanataActor : ReceiveActor
     {
         if (_connectionId is { } previous)
         {
-            _coordinator.Tell(new KeyboardModeUnavailable(previous));
+            _coordinator.Tell(new KeyboardLayerUnavailable(previous));
         }
 
         _connectionId = opened.ConnectionId;
@@ -48,7 +48,7 @@ public sealed class KanataActor : ReceiveActor
         {
             case KanataLayerChanged layerChanged:
                 _coordinator.Tell(
-                    new KeyboardModeObserved(
+                    new KeyboardLayerObserved(
                         received.ConnectionId,
                         received.Sequence,
                         layerChanged.Layer));
@@ -72,6 +72,6 @@ public sealed class KanataActor : ReceiveActor
 
         _connectionId = null;
         _sequenceHighWatermark = 0;
-        _coordinator.Tell(new KeyboardModeUnavailable(closed.ConnectionId));
+        _coordinator.Tell(new KeyboardLayerUnavailable(closed.ConnectionId));
     }
 }

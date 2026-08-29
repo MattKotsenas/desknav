@@ -13,7 +13,12 @@ public sealed class KanataActorTests
     public async Task RejectsStaleConnectionsAndNonIncreasingSequences()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var observed = Channel.CreateUnbounded<object>();
+        var observed = Channel.CreateBounded<object>(
+            new BoundedChannelOptions(6)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+            });
         var system = ActorSystem.Create("kanata-actor-test");
 
         try
@@ -32,7 +37,7 @@ public sealed class KanataActorTests
                 new KanataFrameReceived(
                     oldConnection,
                     KanataFrameSequence.From(1),
-                    new KanataLayerChanged(KeyboardLayer.From("wm"))));
+                    new KanataLayerChanged(KeyboardLayer.From("command"))));
             kanataActor.Tell(new KanataConnectionOpened(currentConnection));
             kanataActor.Tell(
                 new KanataFrameReceived(
@@ -67,22 +72,28 @@ public sealed class KanataActorTests
                     TimeSpan.FromSeconds(3),
                     PoisonPill.Instance));
             recorder.Tell(PoisonPill.Instance);
-            var messages = await ReadAllAsync(observed.Reader, timeout.Token);
+            var messages = new object[5];
+            for (var index = 0; index < messages.Length; index++)
+            {
+                messages[index] = await observed.Reader.ReadAsync(timeout.Token);
+            }
+            await observed.Reader.Completion.WaitAsync(timeout.Token);
+            Assert.False(observed.Reader.TryRead(out _));
 
             Assert.Collection(
                 messages,
                 message =>
                 {
-                    var mode = Assert.IsType<KeyboardModeObserved>(message);
+                    var mode = Assert.IsType<KeyboardLayerObserved>(message);
                     Assert.Equal(oldConnection, mode.ConnectionId);
-                    Assert.Equal("wm", mode.Layer.Value);
+                    Assert.Equal("command", mode.Layer.Value);
                 },
                 message => Assert.Equal(
                     oldConnection,
-                    Assert.IsType<KeyboardModeUnavailable>(message).ConnectionId),
+                    Assert.IsType<KeyboardLayerUnavailable>(message).ConnectionId),
                 message =>
                 {
-                    var mode = Assert.IsType<KeyboardModeObserved>(message);
+                    var mode = Assert.IsType<KeyboardLayerObserved>(message);
                     Assert.Equal(currentConnection, mode.ConnectionId);
                     Assert.Equal("pointer", mode.Layer.Value);
                 },
@@ -96,25 +107,12 @@ public sealed class KanataActorTests
                 },
                 message => Assert.Equal(
                     currentConnection,
-                    Assert.IsType<KeyboardModeUnavailable>(message).ConnectionId));
+                    Assert.IsType<KeyboardLayerUnavailable>(message).ConnectionId));
         }
         finally
         {
             await system.Terminate();
         }
-    }
-
-    private static async Task<IReadOnlyList<object>> ReadAllAsync(
-        ChannelReader<object> reader,
-        CancellationToken cancellationToken)
-    {
-        var messages = new List<object>();
-        await foreach (var message in reader.ReadAllAsync(cancellationToken))
-        {
-            messages.Add(message);
-        }
-
-        return messages;
     }
 
     private sealed class RecordingActor : ReceiveActor

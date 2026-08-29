@@ -36,7 +36,7 @@ context.
 ### Workflows and boundaries each have one owner
 
 One local control-plane coordinator owns the logical navigation workflow. The
-target-discovery, overlay, one-shot-action, keyboard-mode, and Komorebi
+target-discovery, overlay, one-shot-action, keyboard-layer, and Komorebi
 boundaries each have one owner.
 
 When Kanata is in passthrough, control-plane and boundary work never delays
@@ -62,7 +62,7 @@ assumption.
 Desired state carries a newer-wins revision. Boundary owners serialize or
 coalesce their effects and reconcile after completion so an older operation
 cannot define the current state after a newer one. A newer user mode
-supersedes an older keyboard-mode request.
+supersedes an older keyboard-layer request.
 
 ### Outcomes describe knowledge, not permanent desktop truth
 
@@ -96,11 +96,14 @@ movement, wheel input, physical button taps, and physical gesture timing.
 No other Desknav component acquires raw physical input or polls key, button, or
 device state. The control plane accepts physical-gesture ingress only through
 Kanata's newline-delimited JSON TCP protocol. Passthrough gestures produce no
-control-plane-observable event. While input is delegated, stock Kanata reports
-progressive layer changes and config-authored gesture tokens over its
-newline-delimited JSON TCP protocol. Layer changes report observed keyboard
-mode; gesture tokens report configuration-recognized input for coordinator
-interpretation.
+control-plane-observable event.
+
+Kanata uses `base` for ordinary input, `command` for delegated gesture tokens,
+and `pointer` for direct held movement and wheel input. Prefixes, target
+selection, and one-shot or sticky lifetime are not Kanata layers. While input
+is delegated, stock Kanata reports actual layer changes and config-authored
+gesture tokens over its newline-delimited JSON TCP protocol. Gesture tokens
+report configuration-recognized input for coordinator interpretation.
 
 ### Kanata TCP ingress
 
@@ -110,9 +113,9 @@ from that socket. It does not interpret semantic meaning.
 
 ### Local Kanata actor
 
-The local Kanata actor owns the keyboard-mode boundary. It accepts only the
+The local Kanata actor owns the keyboard-layer boundary. It accepts only the
 current connection's increasing frames and emits layer and gesture
-observations to the coordinator. It is the sole recipient of keyboard-mode
+observations to the coordinator. It is the sole recipient of keyboard-layer
 commands, but it does not activate label input while no capture-safe binding
 exists. A capture-safe binding proves that each accepted label gesture was
 captured while its exact presentation revision was the current confirmed
@@ -123,8 +126,9 @@ binding. The actor does not own observed-mode presentation.
 
 The control plane owns focus-context routing, navigation workflow state,
 outcomes, and desired external state. One local coordinator serializes
-workflow decisions. It rejects obsolete input and results before they can
-affect the current workflow.
+workflow decisions. It owns command-prefix progress and one-shot or sticky
+semantic lifetime. It rejects obsolete input and results before they can affect
+the current workflow.
 
 The coordinator allocates a workflow generation whenever it starts a logical
 navigation workflow. That coordinator-local identity scopes workflow state.
@@ -178,21 +182,29 @@ sequenceDiagram
     participant D as Target discovery owner
     participant O as Overlay owner
 
-    K-->>KA: Layer-change frame via TCP ingress
-    KA-->>C: Observed keyboard mode
-    K-->>KA: Gesture-token frame via TCP ingress
-    KA-->>C: Observed gesture
+    K-->>KA: Layer-change frame: command via TCP ingress
+    KA-->>C: Observed keyboard layer
+    K-->>KA: Command Space token via TCP ingress
+    KA-->>C: Gesture observed (command, Space)
+    C->>C: Pointer prefix active
+    K-->>KA: Layer-change frame: pointer via TCP ingress
+    KA-->>C: Observed keyboard layer
+    K-->>KA: Pointer F token via TCP ingress
+    KA-->>C: Gesture observed (pointer, F)
+    C->>C: Recognize pointer target command
     C->>D: Discover targets (request ID)
+    K-->>KA: Layer-change frame: command via TCP ingress
+    KA-->>C: Observed keyboard layer
     D-->>C: Target snapshot (request ID)
     C->>O: Present labeled scene (presentation revision)
     O-->>C: Scene active (presentation revision)
 ```
 
-Escape changes the coordinator state immediately and explicitly cancels
-obsolete work. When a new request supersedes an old one, the coordinator sends
-the cancellation before the new request without waiting for cancellation to
-finish. Late results retain their request identity and cannot produce current
-presentation or advance a later workflow.
+Escape changes external Kanata to `base` locally and emits a cancellation
+gesture. The local transition does not wait for the control plane. The
+coordinator ends its current command session when it observes either fact.
+Discovery cancellation, supersession, result ordering, and presentation remain
+defined backlog work.
 
 The coordinator allocates and owns the presentation revision. After the
 overlay owner confirms that revision is rendered, label activation follows the
