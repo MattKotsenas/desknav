@@ -6,25 +6,25 @@ truth for system shape.
 
 ## 1. Interpret command gestures through one control-plane workflow
 
-Wire Kanata command-mode generations and recognized gesture tokens into one
-control-plane coordinator. Route target discovery to its boundary owner.
-Target discovery follows the cancellation and supersession contract in
-[ARCHITECTURE.md](ARCHITECTURE.md).
+Wire stock Kanata's progressive layer observations and recognized gesture
+tokens into one control-plane coordinator. Route target discovery to its
+boundary owner. Target discovery follows the cancellation and supersession
+contract in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Done when a deterministic scenario begins in the current delegated command
-mode, injects a recognized current-generation gesture through the production
-Kanata delegated-gesture protocol boundary, and observes the coordinator issue
-the corresponding target-discovery request. A current discovery result causes
-the coordinator to issue the current revisioned presentation request. Escape
-before completion issues discovery cancellation and no presentation request.
-The supersession scenario withholds cancellation completion, observes
-cancellation dispatch followed by the superseding request, and only then
-releases cancellation completion. Obsolete results cannot advance the later
-workflow. A gesture captured in a prior command-mode generation produces no
-boundary request after a newer generation becomes active. The Escape scenario
-withholds cancellation completion after observing dispatch, observes Kanata in
-passthrough, and then makes control-plane IPC unavailable. The next ordinary
-key still reaches Windows within the direct-passthrough acceptance bound.
+Done when a deterministic scenario sends the production `CAP Space f` layer
+and gesture frames through the stock Kanata TCP boundary and observes the
+coordinator issue the corresponding target-discovery request. Progressive
+mode observations remain available to presentation without determining
+semantic meaning. A current discovery result causes the coordinator to issue
+the current revisioned presentation request. Escape before completion issues
+discovery cancellation and no presentation request. The supersession scenario
+withholds cancellation completion, observes cancellation dispatch followed by
+the superseding request, and only then releases cancellation completion.
+Obsolete results cannot advance the later workflow. A disconnect invalidates
+the observed keyboard mode. The Escape scenario withholds cancellation
+completion after observing dispatch, observes Kanata in passthrough, and then
+makes control-plane IPC unavailable. The next ordinary key still reaches
+Windows within the direct-passthrough acceptance bound.
 Architecture tests prove workflow state is confined to coordinator policy,
 workflow requests to boundary owners originate with the coordinator, and
 sibling boundary owners cannot command one another. Each external adapter is
@@ -49,15 +49,13 @@ one-shot action, no stale overlay or command character, and no mismatch
 between a visible label and the target it selects. Deterministic scenarios
 deliver a stale overlay confirmation from an older workflow and prove no label
 revision becomes active, then deliver the matching current confirmation and
-prove the revision becomes active. Kanata simulation proves each label gesture
-carries the revision active at capture. A label captured for an older active
-revision remains inactive after a newer revision becomes current, while a
-label captured for the current revision selects from that target map. After
-Escape invalidates a confirmed target map, a late label captured for that map
-produces no one-shot-action request. Another scenario holds an older overlay
-render, activates a newer scene, releases the old render, and proves the newer
-scene remains visible. A separate scenario proves the same newer-wins result
-for delayed cleanup. With current overlay cleanup withheld after command-mode
+prove the revision becomes active. Label input satisfies the capture-safe
+selection contract in [ARCHITECTURE.md](ARCHITECTURE.md#target-selection-workflow).
+After Escape invalidates a confirmed target map, a late label gesture produces
+no one-shot-action request. Another scenario holds an older overlay render,
+activates a newer scene, releases the old render, and proves the newer scene
+remains visible. A separate scenario proves the same newer-wins result for
+delayed cleanup. With current overlay cleanup withheld after command-mode
 exit, Kanata still reaches observed passthrough and the next ordinary key
 reaches Windows within the direct-passthrough acceptance bound.
 

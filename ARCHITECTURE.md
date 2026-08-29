@@ -96,12 +96,12 @@ movement, wheel input, physical button taps, and physical gesture timing.
 No other Desknav component acquires raw physical input or polls key, button, or
 device state. The control plane accepts physical-gesture ingress only through
 Kanata's delegated-gesture protocol. Passthrough gestures produce no
-control-plane-observable event.
-Kanata allocates a new command-mode generation whenever it enters delegated
-command input, reports that generation with its actual mode, and stamps
-forwarded gestures with the generation active at capture. The keyboard-mode
-owner reconciles the coordinator's desired mode and active presentation
-revision with Kanata.
+control-plane-observable event. While input is delegated, stock Kanata reports
+progressive layer changes and config-authored gesture tokens over its
+newline-delimited JSON TCP protocol. These messages describe keyboard facts,
+not semantic intent. The keyboard-mode owner preserves their receive order and
+reports them to the coordinator. It also reconciles the coordinator's desired
+mode with Kanata.
 
 ### Control plane
 
@@ -154,22 +154,26 @@ The coordinator directs boundary work from its current workflow state.
 ```mermaid
 sequenceDiagram
     participant K as Kanata
+    participant M as Keyboard-mode owner
     participant C as Control plane
     participant D as Target discovery owner
     participant O as Overlay owner
-    participant M as Keyboard-mode owner
     participant A as One-shot-action owner
 
-    K->>C: Command gesture (mode generation)
+    K-->>M: Layer change (command)
+    M-->>C: Observed keyboard mode
+    K-->>M: Recognized gesture token
+    M-->>C: Observed gesture
     C->>D: Discover targets (request ID)
     D-->>C: Target snapshot (request ID)
     C->>O: Present labeled scene (presentation revision)
     O-->>C: Scene active (presentation revision)
-    C->>M: Activate labels (mode generation, presentation revision)
-    M->>K: Reconcile mode and active revision
-    K-->>M: Observed mode and active revision
-    M-->>C: Mode observation (mode generation, presentation revision)
-    K->>C: Label gesture (mode and presentation revision)
+    C->>M: Activate labels (presentation revision)
+    M->>K: Reconcile label mode
+    K-->>M: Observed label mode
+    M-->>C: Mode observation
+    K-->>M: Label gesture
+    M-->>C: Observed label gesture
     C->>A: One-shot action (operation ID)
     A-->>C: Operation outcome (operation ID)
 ```
@@ -182,11 +186,11 @@ presentation or advance a later workflow.
 
 The coordinator allocates and owns the presentation revision. After the
 overlay owner confirms that revision is rendered, the coordinator directs the
-keyboard-mode owner to make it active in Kanata. Kanata stamps label gestures
-with the active revision at capture. The coordinator accepts a label only when
-its revision matches the current confirmed target map and clears the active
-revision when it invalidates that map. A gesture captured for a stale scene
-cannot select from a newer one.
+keyboard-mode owner to activate label input. Stock Kanata does not stamp a
+label gesture with the presentation revision active at capture. Label
+selection therefore remains disabled until its boundary can prove that a
+gesture belongs to the current confirmed target map. A stale scene must never
+select from a newer one.
 
 Overlay, Komorebi, and other cleanup follow command-mode exit independently.
 A later workflow may begin while old cleanup remains in flight; boundary
@@ -205,6 +209,13 @@ lifetime, and a monotonic connection-local sequence when transport order
 matters. A transport sequence restarts only with a new connection identity and
 never identifies semantic work. Boundary owners reject prior-lifetime and
 out-of-order messages before semantic identities are evaluated.
+
+Stock Kanata does not provide a process lifetime or transport sequence. Its
+boundary assigns a new connection lifetime to each socket and an ingress
+ordinal to each frame read from that socket. Those identities order received
+frames but cannot prove that Kanata emitted every notification. A disconnect
+invalidates the observed mode; reconnect begins with unknown mode until Kanata
+reports its current layer.
 
 ## Failure and recovery
 

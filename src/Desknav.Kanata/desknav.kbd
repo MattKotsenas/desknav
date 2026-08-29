@@ -5,7 +5,7 @@
 )
 
 (defsrc
-  caps spc esc h j k l
+  caps spc esc f h j k l
 )
 
 (defvar
@@ -23,6 +23,7 @@
   caps (layer-switch base)
   spc (layer-switch pointer)
   esc (layer-switch base)
+  f (multi f (layer-switch base))
   h (multi h (layer-switch base))
   j (multi j (layer-switch base))
   k (multi k (layer-switch base))
@@ -33,6 +34,7 @@
   caps (layer-switch base)
   esc (layer-switch base)
   spc XX
+  f (multi (push-msg gesture pointer f) (layer-switch base))
   h @left
   j @down
   k @up
