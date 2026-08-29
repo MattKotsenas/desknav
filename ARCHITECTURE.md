@@ -79,6 +79,14 @@ the policy that decides what they mean. Integration code uses native APIs
 directly; an adapter exists only to isolate a process or operating-system
 boundary from policy.
 
+### Artifact production and deployment have separate owners
+
+Desknav owns deterministic artifact identity, exact contents, and
+source-to-artifact verification. A deployment consumer owns provisioning,
+version retention, process exclusion, activation, production cutover,
+rollback between distinct artifacts, and acceptance for those guarantees.
+Desknav does not prescribe or duplicate the consumer's deployment lifecycle.
+
 ## Components
 
 ### Kanata
