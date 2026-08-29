@@ -31,11 +31,12 @@ sibling boundary owners cannot command one another. Each external adapter is
 accessible only to its designated boundary owner. A repository check proves
 Desknav production code does not reference keyboard-hook, raw-input, HID,
 key-state, or alternate continuous-pointer APIs. A closed-ingress check proves
-physical gestures can enter the control plane only through Kanata's
-delegated-gesture protocol. With control-plane IPC unavailable, Windows
-acceptance proves held movement, wheel input, and physical button taps still
-flow directly through Kanata. With IPC active, passthrough gestures produce no
-control-plane-observable traffic or state change through any channel.
+the control plane accepts physical gestures only through the
+[Kanata TCP ingress](ARCHITECTURE.md#kanata-tcp-ingress). With control-plane
+IPC unavailable, Windows acceptance proves held movement, wheel input, and
+physical button taps still flow directly through Kanata. With IPC active,
+passthrough gestures produce no control-plane-observable traffic or state
+change through any channel.
 
 ## 2. Present visible targets so the user can choose a desktop action
 
@@ -47,12 +48,14 @@ Done when Windows acceptance proves point without activation, explicit
 activation, cancellation after targets appear, focus change before the
 one-shot action, no stale overlay or command character, and no mismatch
 between a visible label and the target it selects. Deterministic scenarios
-deliver a stale overlay confirmation from an older workflow and prove no label
-revision becomes active, then deliver the matching current confirmation and
-prove the revision becomes active. Label input satisfies the capture-safe
-selection contract in [ARCHITECTURE.md](ARCHITECTURE.md#target-selection-workflow).
-After Escape invalidates a confirmed target map, a late label gesture produces
-no one-shot-action request. Another scenario holds an older overlay render,
+deliver a stale overlay confirmation from an older workflow and prove its
+presentation revision cannot become current, then deliver the matching current
+confirmation and prove its target map becomes presentation-current. Before
+label input or one-shot action is enabled, a separate architecture change
+defines the binding required by the
+[capture-safe input contract](ARCHITECTURE.md#local-kanata-actor). After Escape
+invalidates a confirmed target map, a late label gesture produces no
+one-shot-action request. Another scenario holds an older overlay render,
 activates a newer scene, releases the old render, and proves the newer scene
 remains visible. A separate scenario proves the same newer-wins result for
 delayed cleanup. With current overlay cleanup withheld after command-mode
@@ -113,8 +116,9 @@ during any timeout, reconnect, or restart recovery under any operation
 identity. Composition tests prove exactly one runtime command recipient and
 writer exists for each boundary. Architecture tests prove each boundary owner
 owns its boundary-work scheduling and no synchronization gate spans owners.
-The delegated-gesture, target-selection, and focused-context passthrough
-scenarios above run for every terminal path whose policy leaves command mode.
+The passthrough scenarios above for Kanata ingress, target selection, and
+focused-context routing run for every terminal path whose policy leaves
+command mode.
 
 ## 5. Publish dogfoodable behavior for a deployment consumer
 
