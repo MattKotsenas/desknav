@@ -1,5 +1,7 @@
 using Desknav.ControlPlane;
 
+using Vogen;
+
 namespace Desknav.ControlPlane.Tests;
 
 public sealed class ValueObjectTests
@@ -7,12 +9,15 @@ public sealed class ValueObjectTests
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void IngressOrdinalRequiresPositiveValue(long value)
+    public void FrameSequenceRequiresPositiveValue(long value)
     {
-        var exception = Assert.Throws<ArgumentOutOfRangeException>(
-            () => new KanataIngressOrdinal(value));
+        var exception = Assert.Throws<ValueObjectValidationException>(
+            () => KanataFrameSequence.From(value));
 
-        Assert.Equal("value", exception.ParamName);
+        Assert.Contains(
+            "positive",
+            exception.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]

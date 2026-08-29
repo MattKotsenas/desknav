@@ -2,13 +2,13 @@ using Akka.Actor;
 
 namespace Desknav.ControlPlane;
 
-public sealed class KanataBoundaryActor : ReceiveActor
+public sealed class KanataActor : ReceiveActor
 {
     private readonly IActorRef _coordinator;
     private KanataConnectionId? _connectionId;
-    private long _lastOrdinal;
+    private long _sequenceHighWatermark;
 
-    public KanataBoundaryActor(IActorRef coordinator)
+    public KanataActor(IActorRef coordinator)
     {
         _coordinator = coordinator;
 
@@ -21,7 +21,7 @@ public sealed class KanataBoundaryActor : ReceiveActor
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         return Akka.Actor.Props.Create(
-            () => new KanataBoundaryActor(coordinator));
+            () => new KanataActor(coordinator));
     }
 
     private void Handle(KanataConnectionOpened opened)
@@ -32,32 +32,32 @@ public sealed class KanataBoundaryActor : ReceiveActor
         }
 
         _connectionId = opened.ConnectionId;
-        _lastOrdinal = 0;
+        _sequenceHighWatermark = 0;
     }
 
     private void Handle(KanataFrameReceived received)
     {
         if (_connectionId != received.ConnectionId
-            || received.Ordinal.Value <= _lastOrdinal)
+            || received.Sequence.Value <= _sequenceHighWatermark)
         {
             return;
         }
 
-        _lastOrdinal = received.Ordinal.Value;
+        _sequenceHighWatermark = received.Sequence.Value;
         switch (received.Frame)
         {
             case KanataLayerChanged layerChanged:
                 _coordinator.Tell(
                     new KeyboardModeObserved(
                         received.ConnectionId,
-                        received.Ordinal,
+                        received.Sequence,
                         layerChanged.Layer));
                 break;
             case KanataGesturePushed gesturePushed:
                 _coordinator.Tell(
                     new GestureObserved(
                         received.ConnectionId,
-                        received.Ordinal,
+                        received.Sequence,
                         gesturePushed.Token));
                 break;
         }
@@ -71,7 +71,7 @@ public sealed class KanataBoundaryActor : ReceiveActor
         }
 
         _connectionId = null;
-        _lastOrdinal = 0;
+        _sequenceHighWatermark = 0;
         _coordinator.Tell(new KeyboardModeUnavailable(closed.ConnectionId));
     }
 }

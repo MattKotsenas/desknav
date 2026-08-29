@@ -2,9 +2,14 @@ using System.Text.Json;
 
 namespace Desknav.ControlPlane;
 
-internal static class KanataFrameParser
+internal interface IKanataFrameParser
 {
-    public static KanataServerFrame Parse(string json)
+    KanataServerFrame Parse(string json);
+}
+
+internal sealed class KanataFrameParser : IKanataFrameParser
+{
+    public KanataServerFrame Parse(string json)
     {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -12,7 +17,8 @@ internal static class KanataFrameParser
         if (root.TryGetProperty("LayerChange", out var layerChange))
         {
             return new KanataLayerChanged(
-                new KeyboardLayer(layerChange.GetProperty("new").GetString()!));
+                KeyboardLayer.From(
+                    layerChange.GetProperty("new").GetString()!));
         }
 
         if (root.TryGetProperty("MessagePush", out var messagePush))

@@ -1,41 +1,34 @@
+using Vogen;
+
 namespace Desknav.ControlPlane;
 
-public sealed record KanataConnectionId
+[ValueObject<Guid>(conversions: Conversions.None)]
+public readonly partial struct KanataConnectionId
 {
-    private KanataConnectionId(Guid value) => Value = value;
+    public static KanataConnectionId New() => From(Guid.NewGuid());
 
-    public Guid Value { get; }
-
-    public static KanataConnectionId New() => new(Guid.NewGuid());
+    private static Validation Validate(Guid value) =>
+        value == Guid.Empty
+            ? Validation.Invalid("A Kanata connection ID cannot be empty.")
+            : Validation.Ok;
 }
 
-public readonly record struct KanataIngressOrdinal
+[ValueObject<long>(conversions: Conversions.None)]
+public readonly partial struct KanataFrameSequence
 {
-    public KanataIngressOrdinal(long value)
-    {
-        if (value <= 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(value),
-                value,
-                "A Kanata ingress ordinal must be positive.");
-        }
-
-        Value = value;
-    }
-
-    public long Value { get; }
+    private static Validation Validate(long value) =>
+        value <= 0
+            ? Validation.Invalid("A Kanata frame sequence must be positive.")
+            : Validation.Ok;
 }
 
-public sealed record KeyboardLayer
+[ValueObject<string>(conversions: Conversions.None)]
+public readonly partial struct KeyboardLayer
 {
-    public KeyboardLayer(string value)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        Value = value;
-    }
-
-    public string Value { get; }
+    private static Validation Validate(string value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? Validation.Invalid("A keyboard layer cannot be empty.")
+            : Validation.Ok;
 }
 
 public sealed record GestureToken
@@ -55,23 +48,26 @@ public sealed record GestureToken
 
 public sealed record KeyboardModeObserved(
     KanataConnectionId ConnectionId,
-    KanataIngressOrdinal Ordinal,
+    KanataFrameSequence Sequence,
     KeyboardLayer Layer);
 
 public sealed record KeyboardModeUnavailable(KanataConnectionId ConnectionId);
 
 public sealed record GestureObserved(
     KanataConnectionId ConnectionId,
-    KanataIngressOrdinal Ordinal,
+    KanataFrameSequence Sequence,
     GestureToken Token);
 
-public sealed record TargetDiscoveryRequestId
+[ValueObject<Guid>(conversions: Conversions.None)]
+public readonly partial struct TargetDiscoveryRequestId
 {
-    private TargetDiscoveryRequestId(Guid value) => Value = value;
+    public static TargetDiscoveryRequestId New() => From(Guid.NewGuid());
 
-    public Guid Value { get; }
-
-    public static TargetDiscoveryRequestId New() => new(Guid.NewGuid());
+    private static Validation Validate(Guid value) =>
+        value == Guid.Empty
+            ? Validation.Invalid(
+                "A target discovery request ID cannot be empty.")
+            : Validation.Ok;
 }
 
 public sealed record DiscoverTargets(TargetDiscoveryRequestId RequestId);
@@ -90,5 +86,5 @@ internal sealed record KanataConnectionClosed(KanataConnectionId ConnectionId);
 
 internal sealed record KanataFrameReceived(
     KanataConnectionId ConnectionId,
-    KanataIngressOrdinal Ordinal,
+    KanataFrameSequence Sequence,
     KanataServerFrame Frame);

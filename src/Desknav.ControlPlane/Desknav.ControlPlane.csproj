@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <PackageReference Include="Akka" />
+    <PackageReference Include="Vogen" />
   </ItemGroup>
 
 </Project>

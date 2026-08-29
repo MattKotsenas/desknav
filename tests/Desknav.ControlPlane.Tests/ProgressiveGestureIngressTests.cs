@@ -31,15 +31,16 @@ public sealed class ProgressiveGestureIngressTests
                 NavigationCoordinator.CreateProps(
                     targetDiscovery,
                     modeObserver));
-            var boundary = system.ActorOf(
-                KanataBoundaryActor.CreateProps(coordinator));
+            var kanataActor = system.ActorOf(
+                KanataActor.CreateProps(coordinator));
             listener.Start();
             var ingress = new KanataTcpIngress(
-                (IPEndPoint)listener.LocalEndpoint);
+                (IPEndPoint)listener.LocalEndpoint,
+                new KanataFrameParser());
 
             var server = WriteFramesAsync(listener, timeout.Token);
 
-            await ingress.RunAsync(boundary, timeout.Token);
+            await ingress.RunAsync(kanataActor, timeout.Token);
             await server;
 
             var commandMode = await ReadAsync<KeyboardModeObserved>(
@@ -92,7 +93,8 @@ public sealed class ProgressiveGestureIngressTests
         {
             listener.Start();
             var ingress = new KanataTcpIngress(
-                (IPEndPoint)listener.LocalEndpoint);
+                (IPEndPoint)listener.LocalEndpoint,
+                new KanataFrameParser());
             var server = WriteFramesAsync(
                 listener,
                 """{"MessagePush":{"message":["wm.focus.left"]}}""",

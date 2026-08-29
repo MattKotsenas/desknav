@@ -7,63 +7,63 @@ using Desknav.ControlPlane;
 
 namespace Desknav.ControlPlane.Tests;
 
-public sealed class KanataBoundaryActorTests
+public sealed class KanataActorTests
 {
     [Fact]
-    public async Task RejectsStaleConnectionsAndNonIncreasingOrdinals()
+    public async Task RejectsStaleConnectionsAndNonIncreasingSequences()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var observed = Channel.CreateUnbounded<object>();
-        var system = ActorSystem.Create("kanata-boundary-test");
+        var system = ActorSystem.Create("kanata-actor-test");
 
         try
         {
             var recorder = system.ActorOf(
                 Props.Create(() => new RecordingActor(observed.Writer)));
-            var boundary = system.ActorOf(
-                KanataBoundaryActor.CreateProps(recorder));
+            var kanataActor = system.ActorOf(
+                KanataActor.CreateProps(recorder));
             var oldConnection = KanataConnectionId.New();
             var currentConnection = KanataConnectionId.New();
             var gesture = new KanataGesturePushed(
                 new GestureToken("pointer", "f"));
 
-            boundary.Tell(new KanataConnectionOpened(oldConnection));
-            boundary.Tell(
+            kanataActor.Tell(new KanataConnectionOpened(oldConnection));
+            kanataActor.Tell(
                 new KanataFrameReceived(
                     oldConnection,
-                    new KanataIngressOrdinal(1),
-                    new KanataLayerChanged(new KeyboardLayer("wm"))));
-            boundary.Tell(new KanataConnectionOpened(currentConnection));
-            boundary.Tell(
+                    KanataFrameSequence.From(1),
+                    new KanataLayerChanged(KeyboardLayer.From("wm"))));
+            kanataActor.Tell(new KanataConnectionOpened(currentConnection));
+            kanataActor.Tell(
                 new KanataFrameReceived(
                     oldConnection,
-                    new KanataIngressOrdinal(2),
+                    KanataFrameSequence.From(2),
                     gesture));
-            boundary.Tell(new KanataConnectionClosed(oldConnection));
-            boundary.Tell(
+            kanataActor.Tell(new KanataConnectionClosed(oldConnection));
+            kanataActor.Tell(
                 new KanataFrameReceived(
                     currentConnection,
-                    new KanataIngressOrdinal(1),
-                    new KanataLayerChanged(new KeyboardLayer("pointer"))));
-            boundary.Tell(
+                    KanataFrameSequence.From(1),
+                    new KanataLayerChanged(KeyboardLayer.From("pointer"))));
+            kanataActor.Tell(
                 new KanataFrameReceived(
                     currentConnection,
-                    new KanataIngressOrdinal(2),
+                    KanataFrameSequence.From(2),
                     gesture));
-            boundary.Tell(
+            kanataActor.Tell(
                 new KanataFrameReceived(
                     currentConnection,
-                    new KanataIngressOrdinal(2),
+                    KanataFrameSequence.From(2),
                     gesture));
-            boundary.Tell(
+            kanataActor.Tell(
                 new KanataFrameReceived(
                     currentConnection,
-                    new KanataIngressOrdinal(1),
+                    KanataFrameSequence.From(1),
                     gesture));
-            boundary.Tell(new KanataConnectionClosed(currentConnection));
+            kanataActor.Tell(new KanataConnectionClosed(currentConnection));
 
             Assert.True(
-                await boundary.GracefulStop(
+                await kanataActor.GracefulStop(
                     TimeSpan.FromSeconds(3),
                     PoisonPill.Instance));
             recorder.Tell(PoisonPill.Instance);
@@ -90,7 +90,9 @@ public sealed class KanataBoundaryActorTests
                 {
                     var received = Assert.IsType<GestureObserved>(message);
                     Assert.Equal(currentConnection, received.ConnectionId);
-                    Assert.Equal(new KanataIngressOrdinal(2), received.Ordinal);
+                    Assert.Equal(
+                        KanataFrameSequence.From(2),
+                        received.Sequence);
                 },
                 message => Assert.Equal(
                     currentConnection,
