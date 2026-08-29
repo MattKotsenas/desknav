@@ -98,8 +98,9 @@ device state. The control plane accepts physical-gesture ingress only through
 Kanata's newline-delimited JSON TCP protocol. Passthrough gestures produce no
 control-plane-observable event. While input is delegated, stock Kanata reports
 progressive layer changes and config-authored gesture tokens over its
-newline-delimited JSON TCP protocol. These messages describe keyboard facts,
-not semantic intent.
+newline-delimited JSON TCP protocol. Layer changes report observed keyboard
+mode; gesture tokens report configuration-recognized input for coordinator
+interpretation.
 
 ### Kanata TCP ingress
 

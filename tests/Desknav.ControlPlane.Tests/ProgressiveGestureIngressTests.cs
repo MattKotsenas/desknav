@@ -84,7 +84,7 @@ public sealed class ProgressiveGestureIngressTests
     }
 
     [Fact]
-    public async Task SemanticIntentFrameIsRejected()
+    public async Task NonGestureMessagePushIsRejected()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var listener = new TcpListener(IPAddress.Loopback, 0);
