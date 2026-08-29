@@ -171,17 +171,14 @@ diagram covers the capture-safe ingress-to-presentation portion.
 ```mermaid
 sequenceDiagram
     participant K as External Kanata
-    participant T as TCP ingress
     participant KA as Local Kanata actor
     participant C as Control plane
     participant D as Target discovery owner
     participant O as Overlay owner
 
-    K-->>T: Layer change (command)
-    T-->>KA: Connection-scoped frame
+    K-->>KA: Layer change over TCP (command)
     KA-->>C: Observed keyboard mode
-    K-->>T: Recognized gesture token
-    T-->>KA: Connection-scoped frame
+    K-->>KA: Recognized gesture token over TCP
     KA-->>C: Observed gesture
     C->>D: Discover targets (request ID)
     D-->>C: Target snapshot (request ID)
