@@ -167,6 +167,8 @@ Kanata to Windows. Its lifetime is the physical key state.
 
 The coordinator directs boundary work from its current workflow state. The
 diagram covers the capture-safe ingress-to-presentation portion.
+[TCP ingress](#kanata-tcp-ingress) is transport plumbing and is omitted from
+the lifelines.
 
 ```mermaid
 sequenceDiagram
@@ -176,9 +178,9 @@ sequenceDiagram
     participant D as Target discovery owner
     participant O as Overlay owner
 
-    K-->>KA: Layer change over TCP (command)
+    K-->>KA: Layer-change frame via TCP ingress
     KA-->>C: Observed keyboard mode
-    K-->>KA: Recognized gesture token over TCP
+    K-->>KA: Gesture-token frame via TCP ingress
     KA-->>C: Observed gesture
     C->>D: Discover targets (request ID)
     D-->>C: Target snapshot (request ID)
