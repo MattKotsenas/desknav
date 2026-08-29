@@ -95,13 +95,29 @@ Kanata is the only keyboard hook. It owns keyboard layers, continuous pointer
 movement, wheel input, physical button taps, and physical gesture timing.
 No other Desknav component acquires raw physical input or polls key, button, or
 device state. The control plane accepts physical-gesture ingress only through
-Kanata's delegated-gesture protocol. Passthrough gestures produce no
-control-plane-observable event.
-Kanata allocates a new command-mode generation whenever it enters delegated
-command input, reports that generation with its actual mode, and stamps
-forwarded gestures with the generation active at capture. The keyboard-mode
-owner reconciles the coordinator's desired mode and active presentation
-revision with Kanata.
+Kanata's newline-delimited JSON TCP protocol. Passthrough gestures produce no
+control-plane-observable event. While input is delegated, stock Kanata reports
+progressive layer changes and config-authored gesture tokens over its
+newline-delimited JSON TCP protocol. Layer changes report observed keyboard
+mode; gesture tokens report configuration-recognized input for coordinator
+interpretation.
+
+### Kanata TCP ingress
+
+The TCP ingress owns the loopback socket and newline framing. It assigns a
+connection lifetime and strictly increasing frame sequence to each frame read
+from that socket. It does not interpret semantic meaning.
+
+### Local Kanata actor
+
+The local Kanata actor owns the keyboard-mode boundary. It accepts only the
+current connection's increasing frames and emits layer and gesture
+observations to the coordinator. It is the sole recipient of keyboard-mode
+commands, but it does not activate label input while no capture-safe binding
+exists. A capture-safe binding proves that each accepted label gesture was
+captured while its exact presentation revision was the current confirmed
+target map. A newer presentation, mode exit, or disconnect invalidates the
+binding. The actor does not own observed-mode presentation.
 
 ### Control plane
 
@@ -149,29 +165,27 @@ Kanata to Windows. Its lifetime is the physical key state.
 
 ### Target-selection workflow
 
-The coordinator directs boundary work from its current workflow state.
+The coordinator directs boundary work from its current workflow state. The
+diagram covers the capture-safe ingress-to-presentation portion.
+[TCP ingress](#kanata-tcp-ingress) is transport plumbing and is omitted from
+the lifelines.
 
 ```mermaid
 sequenceDiagram
-    participant K as Kanata
+    participant K as External Kanata
+    participant KA as Local Kanata actor
     participant C as Control plane
     participant D as Target discovery owner
     participant O as Overlay owner
-    participant M as Keyboard-mode owner
-    participant A as One-shot-action owner
 
-    K->>C: Command gesture (mode generation)
+    K-->>KA: Layer-change frame via TCP ingress
+    KA-->>C: Observed keyboard mode
+    K-->>KA: Gesture-token frame via TCP ingress
+    KA-->>C: Observed gesture
     C->>D: Discover targets (request ID)
     D-->>C: Target snapshot (request ID)
     C->>O: Present labeled scene (presentation revision)
     O-->>C: Scene active (presentation revision)
-    C->>M: Activate labels (mode generation, presentation revision)
-    M->>K: Reconcile mode and active revision
-    K-->>M: Observed mode and active revision
-    M-->>C: Mode observation (mode generation, presentation revision)
-    K->>C: Label gesture (mode and presentation revision)
-    C->>A: One-shot action (operation ID)
-    A-->>C: Operation outcome (operation ID)
 ```
 
 Escape changes the coordinator state immediately and explicitly cancels
@@ -181,12 +195,9 @@ finish. Late results retain their request identity and cannot produce current
 presentation or advance a later workflow.
 
 The coordinator allocates and owns the presentation revision. After the
-overlay owner confirms that revision is rendered, the coordinator directs the
-keyboard-mode owner to make it active in Kanata. Kanata stamps label gestures
-with the active revision at capture. The coordinator accepts a label only when
-its revision matches the current confirmed target map and clears the active
-revision when it invalidates that map. A gesture captured for a stale scene
-cannot select from a newer one.
+overlay owner confirms that revision is rendered, label activation follows the
+[capture-safe input contract](#local-kanata-actor). A stale scene must never
+select from a newer one.
 
 Overlay, Komorebi, and other cleanup follow command-mode exit independently.
 A later workflow may begin while old cleanup remains in flight; boundary
@@ -205,6 +216,13 @@ lifetime, and a monotonic connection-local sequence when transport order
 matters. A transport sequence restarts only with a new connection identity and
 never identifies semantic work. Boundary owners reject prior-lifetime and
 out-of-order messages before semantic identities are evaluated.
+
+Stock Kanata does not provide a process lifetime or transport sequence. The
+[Kanata TCP ingress](#kanata-tcp-ingress) supplies receive-side connection and
+sequence identities. Those identities order received frames but cannot prove
+that external Kanata emitted every notification. A disconnect invalidates the
+observed mode; reconnect begins with unknown mode until external Kanata reports
+its current layer.
 
 ## Failure and recovery
 

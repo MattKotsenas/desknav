@@ -134,6 +134,36 @@ public sealed class KanataSimulatorTests
         Assert.Empty(MouseMoves(output));
     }
 
+    [Fact]
+    public async Task TargetGesturePushesMessageAndReturnsToBase()
+    {
+        var result = await RunSimulatorCommandAsync(
+            $"{EnterPointer()} {Tap("f")} {Tap("spc")} {Tap("h")}");
+        var output = result.StandardOutput;
+        var configLines = await File.ReadAllLinesAsync(
+            Path.Combine(AppContext.BaseDirectory, "desknav.kbd"),
+            TestContext.Current.CancellationToken);
+        var pushMessageBindings = configLines
+            .Select(line => line.Trim())
+            .Where(line => line.Contains("(push-msg", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.DoesNotContain(KeyOutput('↓', 'f'), output, StringComparison.Ordinal);
+        Assert.DoesNotContain(KeyOutput('↑', 'f'), output, StringComparison.Ordinal);
+        Assert.Contains("out:↓Space", output, StringComparison.Ordinal);
+        Assert.Contains("out:↑Space", output, StringComparison.Ordinal);
+        Assert.Contains(KeyOutput('↓', 'h'), output, StringComparison.Ordinal);
+        Assert.Contains(KeyOutput('↑', 'h'), output, StringComparison.Ordinal);
+        Assert.Empty(MouseMoves(output));
+        Assert.Contains(
+            "push-msg was used",
+            result.StandardError,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            ["f (multi (push-msg gesture pointer f) (layer-switch base))"],
+            pushMessageBindings);
+    }
+
     private static string EnterPointer() => $"{Tap("caps")} {Tap("spc")}";
 
     // Q is outside defsrc, so process-unmapped-keys echoes it as a timing fence.
@@ -144,7 +174,11 @@ public sealed class KanataSimulatorTests
 
     private static string Tap(string key) => $"d:{key} t:10 u:{key} t:10";
 
-    private static async Task<string> RunSimulatorAsync(string simulation)
+    private static async Task<string> RunSimulatorAsync(string simulation) =>
+        (await RunSimulatorCommandAsync(simulation)).StandardOutput;
+
+    private static async Task<BufferedCommandResult> RunSimulatorCommandAsync(
+        string simulation)
     {
         var simulatorPath = Path.Combine(
             AppContext.BaseDirectory,
@@ -203,7 +237,7 @@ public sealed class KanataSimulatorTests
             + result.StandardOutput
             + result.StandardError);
 
-        return result.StandardOutput;
+        return result;
     }
 
     private static string AfterMarker(string output, string marker)
