@@ -113,7 +113,10 @@ The local Kanata actor owns the keyboard-mode boundary. It accepts only the
 current connection's increasing frames and emits layer and gesture
 observations to the coordinator. It is the sole recipient of keyboard-mode
 commands, but it does not activate label input while no capture-safe binding
-exists. It does not own observed-mode presentation.
+exists. A capture-safe binding proves that each accepted label gesture was
+captured while its exact presentation revision was the current confirmed
+target map. A newer presentation, mode exit, or disconnect invalidates the
+binding. The actor does not own observed-mode presentation.
 
 ### Control plane
 

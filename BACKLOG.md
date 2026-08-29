@@ -52,15 +52,16 @@ deliver a stale overlay confirmation from an older workflow and prove its
 presentation revision cannot become current, then deliver the matching current
 confirmation and prove its target map becomes presentation-current. Before
 label input or one-shot action is enabled, a separate architecture change
-defines the binding required by the
-[capture-safe input contract](ARCHITECTURE.md#local-kanata-actor). After Escape
-invalidates a confirmed target map, a late label gesture produces no
-one-shot-action request. Another scenario holds an older overlay render,
-activates a newer scene, releases the old render, and proves the newer scene
-remains visible. A separate scenario proves the same newer-wins result for
-delayed cleanup. With current overlay cleanup withheld after command-mode
-exit, Kanata still reaches observed passthrough and the next ordinary key
-reaches Windows within the direct-passthrough acceptance bound.
+defines how the binding required by the
+[capture-safe input contract](ARCHITECTURE.md#local-kanata-actor) is
+established and observed. After Escape invalidates a confirmed target map, a
+late label gesture produces no one-shot-action request. Another scenario holds
+an older overlay render, activates a newer scene, releases the old render, and
+proves the newer scene remains visible. A separate scenario proves the same
+newer-wins result for delayed cleanup. With current overlay cleanup withheld
+after command-mode exit, Kanata still reaches observed passthrough and the
+next ordinary key reaches Windows within the direct-passthrough acceptance
+bound.
 
 One-shot-action scenarios lose a UIA or pointer result after dispatch and prove
 the executor records exactly one dispatch for that logical action across every
