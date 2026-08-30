@@ -128,7 +128,8 @@ The control plane owns focus-context routing, navigation workflow state,
 outcomes, and desired external state. One local coordinator serializes
 workflow decisions. It owns command-prefix progress and one-shot or sticky
 semantic lifetime. It rejects obsolete input and results before they can affect
-the current workflow.
+the current workflow. A gesture token's context establishes its input grammar;
+prefix recognition does not require a matching layer observation.
 
 The coordinator allocates a workflow generation whenever it starts a logical
 navigation workflow. That coordinator-local identity scopes workflow state.

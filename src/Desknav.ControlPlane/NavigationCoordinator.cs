@@ -59,8 +59,7 @@ public sealed class NavigationCoordinator : ReceiveActor
             return;
         }
 
-        if (observed.Token is { Context: "command", Key: "spc" }
-            && _commandState == CommandSessionState.Command)
+        if (observed.Token is { Context: "command", Key: "spc" })
         {
             _commandState = CommandSessionState.PointerPrefix;
         }
