@@ -16,7 +16,7 @@ public sealed class CommandGestureIngressTests
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var observedInput = CreateRecorderChannel(7);
-        var observedDiscoveries = CreateRecorderChannel(1);
+        var observedDiscoveries = CreateRecorderChannel(2);
         var system = ActorSystem.Create("command-gesture-ingress-test");
         var listener = new TcpListener(IPAddress.Loopback, 0);
 
@@ -30,7 +30,8 @@ public sealed class CommandGestureIngressTests
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
                     targetDiscovery,
-                    inputObserver));
+                    inputObserver,
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -73,12 +74,16 @@ public sealed class CommandGestureIngressTests
                 resumedCommandLayer.ConnectionId,
                 unavailable.ConnectionId);
 
-            inputObserver.Tell(PoisonPill.Instance);
-            targetDiscovery.Tell(PoisonPill.Instance);
-            await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             var discovery = await ReadAsync<DiscoverTargets>(
                 observedDiscoveries.Reader,
                 timeout.Token);
+            var cancellation = await ReadAsync<CancelTargetDiscovery>(
+                observedDiscoveries.Reader,
+                timeout.Token);
+
+            inputObserver.Tell(PoisonPill.Instance);
+            targetDiscovery.Tell(PoisonPill.Instance);
+            await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             await WaitForCompletionAsync(
                 observedDiscoveries.Reader,
                 timeout.Token);
@@ -88,6 +93,7 @@ public sealed class CommandGestureIngressTests
             Assert.NotEqual(
                 Guid.Empty,
                 discovery.RequestId.Value);
+            Assert.Equal(discovery.RequestId, cancellation.RequestId);
         }
         finally
         {
@@ -109,7 +115,10 @@ public sealed class CommandGestureIngressTests
             var recorder = system.ActorOf(
                 Props.Create(() => new RecordingActor(observed.Writer)));
             var coordinator = system.ActorOf(
-                NavigationCoordinator.CreateProps(ActorRefs.Nobody, recorder));
+                NavigationCoordinator.CreateProps(
+                    ActorRefs.Nobody,
+                    recorder,
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -194,7 +203,8 @@ public sealed class CommandGestureIngressTests
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
                     targetDiscovery,
-                    inputObserver));
+                    inputObserver,
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -261,7 +271,8 @@ public sealed class CommandGestureIngressTests
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
                     targetDiscovery,
-                    inputObserver));
+                    inputObserver,
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -312,7 +323,7 @@ public sealed class CommandGestureIngressTests
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var observedInput = CreateRecorderChannel(11);
-        var observedDiscoveries = CreateRecorderChannel(2);
+        var observedDiscoveries = CreateRecorderChannel(4);
         var system = ActorSystem.Create("repeated-target-discovery-test");
         var listener = new TcpListener(IPAddress.Loopback, 0);
 
@@ -326,7 +337,8 @@ public sealed class CommandGestureIngressTests
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
                     targetDiscovery,
-                    inputObserver));
+                    inputObserver,
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -360,20 +372,29 @@ public sealed class CommandGestureIngressTests
             Assert.IsType<CommandSessionEnded>(
                 await observedInput.Reader.ReadAsync(timeout.Token));
 
-            inputObserver.Tell(PoisonPill.Instance);
-            targetDiscovery.Tell(PoisonPill.Instance);
-            await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             var first = await ReadAsync<DiscoverTargets>(
+                observedDiscoveries.Reader,
+                timeout.Token);
+            var firstCancellation = await ReadAsync<CancelTargetDiscovery>(
                 observedDiscoveries.Reader,
                 timeout.Token);
             var second = await ReadAsync<DiscoverTargets>(
                 observedDiscoveries.Reader,
                 timeout.Token);
+            var secondCancellation = await ReadAsync<CancelTargetDiscovery>(
+                observedDiscoveries.Reader,
+                timeout.Token);
+
+            inputObserver.Tell(PoisonPill.Instance);
+            targetDiscovery.Tell(PoisonPill.Instance);
+            await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             await WaitForCompletionAsync(
                 observedDiscoveries.Reader,
                 timeout.Token);
 
             Assert.NotEqual(first.RequestId, second.RequestId);
+            Assert.Equal(first.RequestId, firstCancellation.RequestId);
+            Assert.Equal(second.RequestId, secondCancellation.RequestId);
             Assert.False(observedDiscoveries.Reader.TryRead(out _));
         }
         finally
@@ -388,7 +409,7 @@ public sealed class CommandGestureIngressTests
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var observedInput = CreateRecorderChannel(6);
-        var observedDiscoveries = CreateRecorderChannel(1);
+        var observedDiscoveries = CreateRecorderChannel(2);
         var system = ActorSystem.Create("missing-command-layer-test");
         var listener = new TcpListener(IPAddress.Loopback, 0);
 
@@ -402,7 +423,8 @@ public sealed class CommandGestureIngressTests
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
                     targetDiscovery,
-                    inputObserver));
+                    inputObserver,
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -427,17 +449,22 @@ public sealed class CommandGestureIngressTests
                 await observedInput.Reader.ReadAsync(timeout.Token);
             }
 
-            inputObserver.Tell(PoisonPill.Instance);
-            targetDiscovery.Tell(PoisonPill.Instance);
-            await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             var discovery = await ReadAsync<DiscoverTargets>(
                 observedDiscoveries.Reader,
                 timeout.Token);
+            var cancellation = await ReadAsync<CancelTargetDiscovery>(
+                observedDiscoveries.Reader,
+                timeout.Token);
+
+            inputObserver.Tell(PoisonPill.Instance);
+            targetDiscovery.Tell(PoisonPill.Instance);
+            await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             await WaitForCompletionAsync(
                 observedDiscoveries.Reader,
                 timeout.Token);
 
             Assert.NotEqual(Guid.Empty, discovery.RequestId.Value);
+            Assert.Equal(discovery.RequestId, cancellation.RequestId);
             Assert.False(observedInput.Reader.TryRead(out _));
             Assert.False(observedDiscoveries.Reader.TryRead(out _));
         }
