@@ -13,7 +13,7 @@ public sealed class NavigationWorkflowTests
     [Fact]
     public void CommandLayerResetsOnlyCommandProgress()
     {
-        var active = new ActiveTargetDiscovery(
+        var active = new TargetDiscoveryLifecycle.Active(
             WorkflowGeneration.From(1),
             FirstRequestId);
         var state = new NavigationWorkflowState(
@@ -30,7 +30,8 @@ public sealed class NavigationWorkflowTests
             decision.Effects,
             effect => Assert.Equal(
                 observed,
-                Assert.IsType<ReportKeyboardLayer>(effect).Observation));
+                Assert.IsType<NavigationEffect.ReportKeyboardLayer>(
+                    effect).Observation));
     }
 
     [Fact]
@@ -53,7 +54,8 @@ public sealed class NavigationWorkflowTests
             decision.Effects,
             effect => Assert.Equal(
                 observed.Token,
-                Assert.IsType<ReportCommandInput>(effect).Token));
+                Assert.IsType<NavigationEffect.ReportCommandInput>(
+                    effect).Token));
     }
 
     [Fact]
@@ -72,7 +74,7 @@ public sealed class NavigationWorkflowTests
                 () => SecondRequestId);
 
         Assert.Equal(CommandProgress.Command, decision.State.CommandProgress);
-        var active = Assert.IsType<ActiveTargetDiscovery>(
+        var active = Assert.IsType<TargetDiscoveryLifecycle.Active>(
             decision.State.TargetDiscovery);
         Assert.Equal(WorkflowGeneration.From(2), active.Generation);
         Assert.Equal(SecondRequestId, active.RequestId);
@@ -80,13 +82,16 @@ public sealed class NavigationWorkflowTests
             decision.Effects,
             effect => Assert.Equal(
                 observed.Token,
-                Assert.IsType<ReportCommandInput>(effect).Token),
+                Assert.IsType<NavigationEffect.ReportCommandInput>(
+                    effect).Token),
             effect => Assert.Equal(
                 FirstRequestId,
-                Assert.IsType<CancelActiveDiscovery>(effect).RequestId),
+                Assert.IsType<NavigationEffect.CancelDiscovery>(
+                    effect).RequestId),
             effect => Assert.Equal(
                 SecondRequestId,
-                Assert.IsType<RequestTargetDiscovery>(effect).RequestId));
+                Assert.IsType<NavigationEffect.RequestTargetDiscovery>(
+                    effect).RequestId));
     }
 
     [Theory]
@@ -98,13 +103,13 @@ public sealed class NavigationWorkflowTests
     {
         var state = ActiveState(FirstRequestId);
         Assert.Equal(CommandProgress.Command, state.CommandProgress);
-        Assert.IsType<ActiveTargetDiscovery>(state.TargetDiscovery);
+        Assert.IsType<TargetDiscoveryLifecycle.Active>(state.TargetDiscovery);
 
         var decision = EndCommandSession(state, exit);
 
         Assert.Equal(CommandProgress.Inactive, decision.State.CommandProgress);
         Assert.Equal(
-            new IdleTargetDiscovery(WorkflowGeneration.From(1)),
+            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(1)),
             decision.State.TargetDiscovery);
         AssertExitEffects(decision.Effects, exit);
     }
@@ -136,12 +141,12 @@ public sealed class NavigationWorkflowTests
         var accepted = NavigationWorkflow.Decide(state, completed);
 
         Assert.Equal(
-            new IdleTargetDiscovery(WorkflowGeneration.From(1)),
+            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(1)),
             accepted.State.TargetDiscovery);
         Assert.Equal(
             PresentationRevision.From(5),
             accepted.State.LastPresentationRevision);
-        var effect = Assert.IsType<PresentTargetSnapshot>(
+        var effect = Assert.IsType<NavigationEffect.PresentTargetSnapshot>(
             Assert.Single(accepted.Effects));
         Assert.Equal(
             PresentationRevision.From(5),
@@ -153,6 +158,45 @@ public sealed class NavigationWorkflowTests
             completed);
         Assert.Equal(accepted.State, duplicate.State);
         Assert.Empty(duplicate.Effects);
+    }
+
+    [Fact]
+    public void FirstCurrentResultUsesInitialPresentationRevision()
+    {
+        var state = ActiveState(FirstRequestId);
+        Assert.Null(state.LastPresentationRevision);
+        var completed = new TargetDiscoveryCompleted(
+            new TargetSnapshot(FirstRequestId));
+
+        var decision = NavigationWorkflow.Decide(state, completed);
+
+        Assert.Equal(
+            PresentationRevision.From(1),
+            decision.State.LastPresentationRevision);
+        var effect = Assert.IsType<NavigationEffect.PresentTargetSnapshot>(
+            Assert.Single(decision.Effects));
+        Assert.Equal(PresentationRevision.From(1), effect.Revision);
+    }
+
+    [Fact]
+    public void CurrentResultPresentsWhileNextPrefixIsIncomplete()
+    {
+        var state = ActiveState(FirstRequestId) with
+        {
+            CommandProgress = CommandProgress.PointerPrefix,
+        };
+        var completed = new TargetDiscoveryCompleted(
+            new TargetSnapshot(FirstRequestId));
+
+        var decision = NavigationWorkflow.Decide(state, completed);
+
+        Assert.Equal(
+            CommandProgress.PointerPrefix,
+            decision.State.CommandProgress);
+        Assert.IsType<TargetDiscoveryLifecycle.Idle>(
+            decision.State.TargetDiscovery);
+        Assert.IsType<NavigationEffect.PresentTargetSnapshot>(
+            Assert.Single(decision.Effects));
     }
 
     [Fact]
@@ -178,7 +222,8 @@ public sealed class NavigationWorkflowTests
             decision.Effects,
             effect => Assert.Equal(
                 observed.Token,
-                Assert.IsType<ReportCommandInput>(effect).Token));
+                Assert.IsType<NavigationEffect.ReportCommandInput>(
+                    effect).Token));
     }
 
     [Fact]
@@ -186,7 +231,7 @@ public sealed class NavigationWorkflowTests
     {
         var state = new NavigationWorkflowState(
             CommandProgress.PointerPrefix,
-            new IdleTargetDiscovery(WorkflowGeneration.From(1)),
+            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(1)),
             LastPresentationRevision: null);
         var observed = Gesture("pointer", "f");
 
@@ -195,16 +240,35 @@ public sealed class NavigationWorkflowTests
             observed,
             () => SecondRequestId);
 
-        var active = Assert.IsType<ActiveTargetDiscovery>(
+        var active = Assert.IsType<TargetDiscoveryLifecycle.Active>(
             decision.State.TargetDiscovery);
         Assert.Equal(WorkflowGeneration.From(2), active.Generation);
+    }
+
+    [Fact]
+    public void FirstDiscoveryUsesInitialWorkflowGeneration()
+    {
+        var state = new NavigationWorkflowState(
+            CommandProgress.PointerPrefix,
+            new TargetDiscoveryLifecycle.Idle(LastGeneration: null),
+            LastPresentationRevision: null);
+        var observed = Gesture("pointer", "f");
+
+        var decision = NavigationWorkflow.Decide(
+            state,
+            observed,
+            () => FirstRequestId);
+
+        var active = Assert.IsType<TargetDiscoveryLifecycle.Active>(
+            decision.State.TargetDiscovery);
+        Assert.Equal(WorkflowGeneration.From(1), active.Generation);
     }
 
     private static NavigationWorkflowState ActiveState(
         TargetDiscoveryRequestId requestId) =>
         new(
             CommandProgress.Command,
-            new ActiveTargetDiscovery(
+            new TargetDiscoveryLifecycle.Active(
                 WorkflowGeneration.From(1),
                 requestId),
             LastPresentationRevision: null);
@@ -251,16 +315,18 @@ public sealed class NavigationWorkflowTests
             case CommandSessionExit.Escape:
                 Assert.Equal(
                     "esc",
-                    Assert.IsType<ReportCommandInput>(effects[0]).Token.Key);
+                    Assert.IsType<NavigationEffect.ReportCommandInput>(
+                        effects[0]).Token.Key);
                 break;
             case CommandSessionExit.BaseLayer:
                 Assert.Equal(
                     "base",
-                    Assert.IsType<ReportKeyboardLayer>(
+                    Assert.IsType<NavigationEffect.ReportKeyboardLayer>(
                         effects[0]).Observation.Layer.Value);
                 break;
             case CommandSessionExit.Disconnect:
-                Assert.IsType<ReportKeyboardLayerUnavailable>(effects[0]);
+                Assert.IsType<NavigationEffect.ReportKeyboardLayerUnavailable>(
+                    effects[0]);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(
@@ -271,8 +337,15 @@ public sealed class NavigationWorkflowTests
 
         Assert.Equal(
             FirstRequestId,
-            Assert.IsType<CancelActiveDiscovery>(
+            Assert.IsType<NavigationEffect.CancelDiscovery>(
                 effects[1]).RequestId);
-        Assert.IsType<ReportCommandSessionEnded>(effects[2]);
+        Assert.IsType<NavigationEffect.ReportCommandSessionEnded>(effects[2]);
+    }
+
+    public enum CommandSessionExit
+    {
+        Escape,
+        BaseLayer,
+        Disconnect,
     }
 }

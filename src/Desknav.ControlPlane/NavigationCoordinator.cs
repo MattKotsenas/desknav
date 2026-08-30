@@ -63,28 +63,28 @@ public sealed class NavigationCoordinator : ReceiveActor
         {
             switch (effect)
             {
-                case ReportKeyboardLayer report:
+                case NavigationEffect.ReportKeyboardLayer report:
                     _inputObserver.Tell(report.Observation);
                     break;
-                case ReportKeyboardLayerUnavailable report:
+                case NavigationEffect.ReportKeyboardLayerUnavailable report:
                     _inputObserver.Tell(report.Observation);
                     break;
-                case ReportCommandInput report:
+                case NavigationEffect.ReportCommandInput report:
                     _inputObserver.Tell(
                         new CommandInputObserved(report.Token));
                     break;
-                case ReportCommandSessionEnded:
+                case NavigationEffect.ReportCommandSessionEnded:
                     _inputObserver.Tell(new CommandSessionEnded());
                     break;
-                case CancelActiveDiscovery cancel:
+                case NavigationEffect.CancelDiscovery cancel:
                     _targetDiscovery.Tell(
                         new CancelTargetDiscovery(cancel.RequestId));
                     break;
-                case RequestTargetDiscovery request:
+                case NavigationEffect.RequestTargetDiscovery request:
                     _targetDiscovery.Tell(
                         new DiscoverTargets(request.RequestId));
                     break;
-                case PresentTargetSnapshot present:
+                case NavigationEffect.PresentTargetSnapshot present:
                     _overlayOwner.Tell(
                         new PresentTargets(
                             present.Revision,

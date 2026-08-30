@@ -13,7 +13,7 @@ internal static class NavigationWorkflow
         NavigationWorkflowState state,
         KeyboardLayerObserved observed)
     {
-        var report = new ReportKeyboardLayer(observed);
+        var report = new NavigationEffect.ReportKeyboardLayer(observed);
         return observed.Layer.Value switch
         {
             "base" => EndCommandSession(state, report),
@@ -32,14 +32,15 @@ internal static class NavigationWorkflow
         KeyboardLayerUnavailable unavailable) =>
         EndCommandSession(
             state,
-            new ReportKeyboardLayerUnavailable(unavailable));
+            new NavigationEffect.ReportKeyboardLayerUnavailable(unavailable));
 
     public static NavigationDecision Decide(
         NavigationWorkflowState state,
         GestureObserved observed,
         Func<TargetDiscoveryRequestId> nextRequestId)
     {
-        var reportInput = new ReportCommandInput(observed.Token);
+        var reportInput =
+            new NavigationEffect.ReportCommandInput(observed.Token);
 
         if (observed.Token.Key == "esc")
         {
@@ -72,7 +73,7 @@ internal static class NavigationWorkflow
         NavigationWorkflowState state,
         TargetDiscoveryCompleted completed)
     {
-        if (state.TargetDiscovery is not ActiveTargetDiscovery active
+        if (state.TargetDiscovery is not TargetDiscoveryLifecycle.Active active
             || active.RequestId != completed.Snapshot.RequestId)
         {
             return Decision(state);
@@ -85,10 +86,10 @@ internal static class NavigationWorkflow
             state with
             {
                 TargetDiscovery =
-                    new IdleTargetDiscovery(active.Generation),
+                    new TargetDiscoveryLifecycle.Idle(active.Generation),
                 LastPresentationRevision = nextRevision,
             },
-            new PresentTargetSnapshot(
+            new NavigationEffect.PresentTargetSnapshot(
                 nextRevision,
                 completed.Snapshot));
     }
@@ -96,26 +97,27 @@ internal static class NavigationWorkflow
     private static NavigationDecision StartTargetDiscovery(
         NavigationWorkflowState state,
         TargetDiscoveryRequestId nextRequestId,
-        ReportCommandInput reportInput)
+        NavigationEffect.ReportCommandInput reportInput)
     {
-        var previousGeneration = state.TargetDiscovery switch
-        {
-            ActiveTargetDiscovery active => active.Generation,
-            IdleTargetDiscovery { LastGeneration: { } generation } =>
-                generation,
-            _ => (WorkflowGeneration?)null,
-        };
+        var (previousGeneration, previousRequestId) =
+            state.TargetDiscovery switch
+            {
+                TargetDiscoveryLifecycle.Active active =>
+                    (
+                        (WorkflowGeneration?)active.Generation,
+                        (TargetDiscoveryRequestId?)active.RequestId),
+                TargetDiscoveryLifecycle.Idle
+                    { LastGeneration: { } generation } =>
+                    ((WorkflowGeneration?)generation, null),
+                _ => (null, null),
+            };
         var nextGeneration = previousGeneration is { } lastGeneration
             ? WorkflowGeneration.From(lastGeneration.Value + 1)
             : WorkflowGeneration.From(1);
-        var previousRequestId = state.TargetDiscovery
-            is ActiveTargetDiscovery activeDiscovery
-            ? activeDiscovery.RequestId
-            : (TargetDiscoveryRequestId?)null;
         var nextState = state with
         {
             CommandProgress = CommandProgress.Command,
-            TargetDiscovery = new ActiveTargetDiscovery(
+            TargetDiscovery = new TargetDiscoveryLifecycle.Active(
                 nextGeneration,
                 nextRequestId),
         };
@@ -125,14 +127,14 @@ internal static class NavigationWorkflow
             return Decision(
                 nextState,
                 reportInput,
-                new CancelActiveDiscovery(previous),
-                new RequestTargetDiscovery(nextRequestId));
+                new NavigationEffect.CancelDiscovery(previous),
+                new NavigationEffect.RequestTargetDiscovery(nextRequestId));
         }
 
         return Decision(
             nextState,
             reportInput,
-            new RequestTargetDiscovery(nextRequestId));
+            new NavigationEffect.RequestTargetDiscovery(nextRequestId));
     }
 
     private static NavigationDecision EndCommandSession(
@@ -144,28 +146,28 @@ internal static class NavigationWorkflow
             return Decision(state, report);
         }
 
-        var active = state.TargetDiscovery
-            as ActiveTargetDiscovery;
-        var nextState = state with
+        var ended = state with
         {
             CommandProgress = CommandProgress.Inactive,
-            TargetDiscovery = active is null
-                ? state.TargetDiscovery
-                : new IdleTargetDiscovery(active.Generation),
         };
-        if (active is not null)
+        if (state.TargetDiscovery is TargetDiscoveryLifecycle.Active active)
         {
+            ended = ended with
+            {
+                TargetDiscovery =
+                    new TargetDiscoveryLifecycle.Idle(active.Generation),
+            };
             return Decision(
-                nextState,
+                ended,
                 report,
-                new CancelActiveDiscovery(active.RequestId),
-                new ReportCommandSessionEnded());
+                new NavigationEffect.CancelDiscovery(active.RequestId),
+                new NavigationEffect.ReportCommandSessionEnded());
         }
 
         return Decision(
-            nextState,
+            ended,
             report,
-            new ReportCommandSessionEnded());
+            new NavigationEffect.ReportCommandSessionEnded());
     }
 
     private static NavigationDecision Decision(
@@ -185,30 +187,31 @@ internal sealed record NavigationWorkflowState(
     public static NavigationWorkflowState Initial { get; } =
         new(
             CommandProgress.Inactive,
-            new IdleTargetDiscovery(LastGeneration: null),
+            new TargetDiscoveryLifecycle.Idle(LastGeneration: null),
             LastPresentationRevision: null);
 }
 
 /// <summary>
 /// Lets each discovery phase carry only the identities valid in that phase.
 /// </summary>
-internal abstract record TargetDiscoveryLifecycle;
+internal abstract record TargetDiscoveryLifecycle
+{
+    /// <summary>
+    /// Retains the last generation after a request ends to prevent generation
+    /// reuse.
+    /// </summary>
+    internal sealed record Idle(
+        WorkflowGeneration? LastGeneration)
+        : TargetDiscoveryLifecycle;
 
-/// <summary>
-/// Retains the last generation after a request ends to prevent generation
-/// reuse.
-/// </summary>
-internal sealed record IdleTargetDiscovery(
-    WorkflowGeneration? LastGeneration)
-    : TargetDiscoveryLifecycle;
-
-/// <summary>
-/// Supplies the request ID used to accept and cancel in-flight discovery.
-/// </summary>
-internal sealed record ActiveTargetDiscovery(
-    WorkflowGeneration Generation,
-    TargetDiscoveryRequestId RequestId)
-    : TargetDiscoveryLifecycle;
+    /// <summary>
+    /// Supplies the request ID used to accept and cancel in-flight discovery.
+    /// </summary>
+    internal sealed record Active(
+        WorkflowGeneration Generation,
+        TargetDiscoveryRequestId RequestId)
+        : TargetDiscoveryLifecycle;
+}
 
 /// <summary>
 /// Delays effect dispatch until the full state transition has been computed.
@@ -220,55 +223,56 @@ internal sealed record NavigationDecision(
 /// <summary>
 /// Provides a typed vocabulary for work emitted by transition policy.
 /// </summary>
-internal abstract record NavigationEffect;
+internal abstract record NavigationEffect
+{
+    /// <summary>
+    /// Reports an observed layer even when it causes no workflow transition.
+    /// </summary>
+    internal sealed record ReportKeyboardLayer(
+        KeyboardLayerObserved Observation)
+        : NavigationEffect;
 
-/// <summary>
-/// Reports an observed layer even when it causes no workflow transition.
-/// </summary>
-internal sealed record ReportKeyboardLayer(
-    KeyboardLayerObserved Observation)
-    : NavigationEffect;
+    /// <summary>
+    /// Reports layer loss even when the command session is already inactive.
+    /// </summary>
+    internal sealed record ReportKeyboardLayerUnavailable(
+        KeyboardLayerUnavailable Observation)
+        : NavigationEffect;
 
-/// <summary>
-/// Reports layer loss even when the command session is already inactive.
-/// </summary>
-internal sealed record ReportKeyboardLayerUnavailable(
-    KeyboardLayerUnavailable Observation)
-    : NavigationEffect;
+    /// <summary>
+    /// Reports every gesture token, including tokens that change no state.
+    /// </summary>
+    internal sealed record ReportCommandInput(GestureToken Token)
+        : NavigationEffect;
 
-/// <summary>
-/// Reports every gesture token, including tokens that change no state.
-/// </summary>
-internal sealed record ReportCommandInput(GestureToken Token)
-    : NavigationEffect;
+    /// <summary>
+    /// Reports session end even when no discovery was active.
+    /// </summary>
+    internal sealed record ReportCommandSessionEnded
+        : NavigationEffect;
 
-/// <summary>
-/// Reports session end even when no discovery was active.
-/// </summary>
-internal sealed record ReportCommandSessionEnded
-    : NavigationEffect;
+    /// <summary>
+    /// Retires a discovery request the workflow no longer owns.
+    /// </summary>
+    internal sealed record CancelDiscovery(
+        TargetDiscoveryRequestId RequestId)
+        : NavigationEffect;
 
-/// <summary>
-/// Retires a discovery request the workflow no longer owns.
-/// </summary>
-internal sealed record CancelActiveDiscovery(
-    TargetDiscoveryRequestId RequestId)
-    : NavigationEffect;
+    /// <summary>
+    /// Provides the request ID that discovery must echo in its snapshot.
+    /// </summary>
+    internal sealed record RequestTargetDiscovery(
+        TargetDiscoveryRequestId RequestId)
+        : NavigationEffect;
 
-/// <summary>
-/// Provides the request ID that discovery must echo in its snapshot.
-/// </summary>
-internal sealed record RequestTargetDiscovery(
-    TargetDiscoveryRequestId RequestId)
-    : NavigationEffect;
-
-/// <summary>
-/// Carries the revision the overlay must confirm before label activation.
-/// </summary>
-internal sealed record PresentTargetSnapshot(
-    PresentationRevision Revision,
-    TargetSnapshot Snapshot)
-    : NavigationEffect;
+    /// <summary>
+    /// Carries the revision the overlay must confirm before label activation.
+    /// </summary>
+    internal sealed record PresentTargetSnapshot(
+        PresentationRevision Revision,
+        TargetSnapshot Snapshot)
+        : NavigationEffect;
+}
 
 /// <summary>
 /// Records how much of a command gesture has been recognized.
