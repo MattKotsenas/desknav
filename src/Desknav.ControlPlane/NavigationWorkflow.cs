@@ -4,6 +4,9 @@ using Vogen;
 
 namespace Desknav.ControlPlane;
 
+/// <summary>
+/// Determines each navigation transition before boundary work is dispatched.
+/// </summary>
 internal static class NavigationWorkflow
 {
     public static NavigationDecision Decide(
@@ -171,6 +174,9 @@ internal static class NavigationWorkflow
         new(state, [.. effects]);
 }
 
+/// <summary>
+/// Lets one decision compute a complete replacement for workflow state.
+/// </summary>
 internal sealed record NavigationWorkflowState(
     CommandProgress CommandProgress,
     TargetDiscoveryLifecycle TargetDiscovery,
@@ -183,50 +189,90 @@ internal sealed record NavigationWorkflowState(
             LastPresentationRevision: null);
 }
 
+/// <summary>
+/// Lets each discovery phase carry only the identities valid in that phase.
+/// </summary>
 internal abstract record TargetDiscoveryLifecycle;
 
+/// <summary>
+/// Retains the last generation after a request ends to prevent generation
+/// reuse.
+/// </summary>
 internal sealed record IdleTargetDiscovery(
     WorkflowGeneration? LastGeneration)
     : TargetDiscoveryLifecycle;
 
+/// <summary>
+/// Supplies the request ID used to accept and cancel in-flight discovery.
+/// </summary>
 internal sealed record ActiveTargetDiscovery(
     WorkflowGeneration Generation,
     TargetDiscoveryRequestId RequestId)
     : TargetDiscoveryLifecycle;
 
+/// <summary>
+/// Delays effect dispatch until the full state transition has been computed.
+/// </summary>
 internal sealed record NavigationDecision(
     NavigationWorkflowState State,
     ImmutableArray<NavigationEffect> Effects);
 
+/// <summary>
+/// Provides a typed vocabulary for work emitted by transition policy.
+/// </summary>
 internal abstract record NavigationEffect;
 
+/// <summary>
+/// Reports an observed layer even when it causes no workflow transition.
+/// </summary>
 internal sealed record ReportKeyboardLayer(
     KeyboardLayerObserved Observation)
     : NavigationEffect;
 
+/// <summary>
+/// Reports layer loss even when the command session is already inactive.
+/// </summary>
 internal sealed record ReportKeyboardLayerUnavailable(
     KeyboardLayerUnavailable Observation)
     : NavigationEffect;
 
+/// <summary>
+/// Reports every gesture token, including tokens that change no state.
+/// </summary>
 internal sealed record ReportCommandInput(GestureToken Token)
     : NavigationEffect;
 
+/// <summary>
+/// Reports session end even when no discovery was active.
+/// </summary>
 internal sealed record ReportCommandSessionEnded
     : NavigationEffect;
 
+/// <summary>
+/// Retires a discovery request the workflow no longer owns.
+/// </summary>
 internal sealed record CancelActiveDiscovery(
     TargetDiscoveryRequestId RequestId)
     : NavigationEffect;
 
+/// <summary>
+/// Provides the request ID that discovery must echo in its snapshot.
+/// </summary>
 internal sealed record RequestTargetDiscovery(
     TargetDiscoveryRequestId RequestId)
     : NavigationEffect;
 
+/// <summary>
+/// Carries the revision the overlay must confirm before label activation.
+/// </summary>
 internal sealed record PresentTargetSnapshot(
     PresentationRevision Revision,
     TargetSnapshot Snapshot)
     : NavigationEffect;
 
+/// <summary>
+/// Records how much of a command gesture has been recognized.
+/// </summary>
 internal enum CommandProgress
 {
     Inactive,
@@ -234,6 +280,10 @@ internal enum CommandProgress
     PointerPrefix,
 }
 
+/// <summary>
+/// Represents only allocated generations; an unallocated generation has no
+/// value.
+/// </summary>
 [ValueObject<long>(conversions: Conversions.None)]
 internal readonly partial struct WorkflowGeneration
 {

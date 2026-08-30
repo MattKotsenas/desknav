@@ -5,12 +5,10 @@ namespace Desknav.ControlPlane.Tests;
 public sealed class NavigationWorkflowTests
 {
     private static readonly TargetDiscoveryRequestId FirstRequestId =
-        TargetDiscoveryRequestId.From(
-            Guid.Parse("00000000-0000-0000-0000-000000000001"));
+        TargetDiscoveryRequestId.Parse("00000000-0000-0000-0000-000000000001");
 
     private static readonly TargetDiscoveryRequestId SecondRequestId =
-        TargetDiscoveryRequestId.From(
-            Guid.Parse("00000000-0000-0000-0000-000000000002"));
+        TargetDiscoveryRequestId.Parse("00000000-0000-0000-0000-000000000002");
 
     [Fact]
     public void CommandLayerResetsOnlyCommandProgress()
