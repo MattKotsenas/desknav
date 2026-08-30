@@ -20,6 +20,34 @@ public sealed class ValueObjectTests
             StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void WorkflowGenerationRequiresPositiveValue(long value)
+    {
+        var exception = Assert.Throws<ValueObjectValidationException>(
+            () => WorkflowGeneration.From(value));
+
+        Assert.Contains(
+            "positive",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void PresentationRevisionRequiresPositiveValue(long value)
+    {
+        var exception = Assert.Throws<ValueObjectValidationException>(
+            () => PresentationRevision.From(value));
+
+        Assert.Contains(
+            "positive",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void GeneratedIdentifiersAreNonEmpty()
     {

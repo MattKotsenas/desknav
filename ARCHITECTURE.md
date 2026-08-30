@@ -202,16 +202,25 @@ sequenceDiagram
 ```
 
 Escape changes external Kanata to `base` locally and emits a cancellation
-gesture. The local transition does not wait for the control plane. The
-coordinator ends its current command session when it observes either fact.
-A received `command` layer observation resets any incomplete pointer prefix.
-Discovery cancellation, supersession, result ordering, and presentation
-remain defined backlog work.
+gesture independently of the control plane. The coordinator ends its current
+command session when it observes either fact.
 
-The coordinator allocates and owns the presentation revision. After the
-overlay owner confirms that revision is rendered, label activation follows the
-[capture-safe input contract](#local-kanata-actor). A stale scene must never
-select from a newer one.
+A received `command` layer observation resets any incomplete pointer prefix
+without invalidating active discovery. When a new pointer-target command
+completes, the coordinator allocates a target-discovery request ID, makes any
+prior discovery obsolete, sends its cancellation before the new request, and
+does not wait for cancellation completion. Command-session exit makes active
+discovery obsolete and dispatches its cancellation.
+
+A target result maps to the current workflow only when its request ID matches
+the active discovery. Obsolete and duplicate results do not affect
+presentation.
+
+When it accepts a current result, the coordinator allocates and owns the next
+presentation revision and sends the revisioned snapshot to the overlay owner.
+After the overlay owner confirms that revision is rendered, label activation
+follows the [capture-safe input contract](#local-kanata-actor). A stale scene
+must never select from a newer one.
 
 Overlay, Komorebi, and other cleanup follow command-mode exit independently.
 A later workflow may begin while old cleanup remains in flight; boundary

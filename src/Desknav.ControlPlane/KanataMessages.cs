@@ -58,24 +58,6 @@ public sealed record GestureObserved(
     KanataFrameSequence Sequence,
     GestureToken Token);
 
-public sealed record CommandInputObserved(GestureToken Token);
-
-public sealed record CommandSessionEnded;
-
-[ValueObject<Guid>(conversions: Conversions.None)]
-public readonly partial struct TargetDiscoveryRequestId
-{
-    public static TargetDiscoveryRequestId New() => From(Guid.NewGuid());
-
-    private static Validation Validate(Guid value) =>
-        value == Guid.Empty
-            ? Validation.Invalid(
-                "A target discovery request ID cannot be empty.")
-            : Validation.Ok;
-}
-
-public sealed record DiscoverTargets(TargetDiscoveryRequestId RequestId);
-
 internal abstract record KanataServerFrame;
 
 internal sealed record KanataLayerChanged(KeyboardLayer Layer)
