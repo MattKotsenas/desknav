@@ -243,6 +243,71 @@ public sealed class CommandGestureIngressTests
     }
 
     [Fact]
+    public async Task ReturnToCommandClearsIncompletePointerPrefix()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var observedInput = CreateRecorderChannel(8);
+        var observedDiscoveries = CreateRecorderChannel(0);
+        var system = ActorSystem.Create("pointer-prefix-reset-test");
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+
+        try
+        {
+            var inputObserver = system.ActorOf(
+                Props.Create(() => new RecordingActor(observedInput.Writer)));
+            var targetDiscovery = system.ActorOf(
+                Props.Create(
+                    () => new RecordingActor(observedDiscoveries.Writer)));
+            var coordinator = system.ActorOf(
+                NavigationCoordinator.CreateProps(
+                    targetDiscovery,
+                    inputObserver));
+            var kanataActor = system.ActorOf(
+                KanataActor.CreateProps(coordinator));
+            listener.Start();
+            var ingress = new KanataTcpIngress(
+                (IPEndPoint)listener.LocalEndpoint,
+                new KanataFrameParser());
+            var server = WriteFramesAsync(
+                listener,
+                """
+                {"LayerChange":{"new":"command"}}
+                {"MessagePush":{"message":["gesture","command","spc"]}}
+                {"LayerChange":{"new":"pointer"}}
+                {"LayerChange":{"new":"command"}}
+                {"LayerChange":{"new":"pointer"}}
+                {"MessagePush":{"message":["gesture","pointer","f"]}}
+                """,
+                timeout.Token);
+
+            await ingress.RunAsync(kanataActor, timeout.Token);
+            await server;
+
+            for (var index = 0; index < 7; index++)
+            {
+                await observedInput.Reader.ReadAsync(timeout.Token);
+            }
+            Assert.IsType<CommandSessionEnded>(
+                await observedInput.Reader.ReadAsync(timeout.Token));
+
+            inputObserver.Tell(PoisonPill.Instance);
+            targetDiscovery.Tell(PoisonPill.Instance);
+            await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
+            await WaitForCompletionAsync(
+                observedDiscoveries.Reader,
+                timeout.Token);
+
+            Assert.False(observedInput.Reader.TryRead(out _));
+            Assert.False(observedDiscoveries.Reader.TryRead(out _));
+        }
+        finally
+        {
+            listener.Stop();
+            await system.Terminate();
+        }
+    }
+
+    [Fact]
     public async Task EachSpacePointerFTupleRequestsDiscovery()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));

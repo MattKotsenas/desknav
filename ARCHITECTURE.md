@@ -203,8 +203,9 @@ sequenceDiagram
 Escape changes external Kanata to `base` locally and emits a cancellation
 gesture. The local transition does not wait for the control plane. The
 coordinator ends its current command session when it observes either fact.
-Discovery cancellation, supersession, result ordering, and presentation remain
-defined backlog work.
+A received `command` layer observation resets any incomplete pointer prefix.
+Discovery cancellation, supersession, result ordering, and presentation
+remain defined backlog work.
 
 The coordinator allocates and owns the presentation revision. After the
 overlay owner confirms that revision is rendered, label activation follows the

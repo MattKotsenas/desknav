@@ -37,8 +37,7 @@ public sealed class NavigationCoordinator : ReceiveActor
         {
             EndCommandSession();
         }
-        else if (observed.Layer.Value == "command"
-                 && _commandState == CommandSessionState.Inactive)
+        else if (observed.Layer.Value == "command")
         {
             _commandState = CommandSessionState.Command;
         }

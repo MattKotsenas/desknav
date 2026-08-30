@@ -22,11 +22,13 @@ discovery cancellation, and produces no presentation request. The supersession
 scenario withholds cancellation completion, observes cancellation dispatch
 followed by the superseding request, and only then releases cancellation
 completion. Obsolete results cannot advance the later workflow. A disconnect
-invalidates the observed keyboard layer and command progress. The Escape
-scenario withholds cancellation completion after observing dispatch, observes
-Kanata in passthrough, and then makes control-plane IPC unavailable. The next
-ordinary key still reaches Windows within the direct-passthrough acceptance
-bound.
+invalidates the observed keyboard layer and command progress. Command-prefix
+recovery exercises the
+[received-layer reset rule](ARCHITECTURE.md#target-selection-workflow). The
+Escape scenario withholds cancellation completion after observing dispatch,
+observes Kanata in passthrough, and then makes control-plane IPC unavailable.
+The next ordinary key still reaches Windows within the direct-passthrough
+acceptance bound.
 Architecture tests prove workflow state is confined to coordinator policy,
 workflow requests to boundary owners originate with the coordinator, and
 sibling boundary owners cannot command one another. Each external adapter is
