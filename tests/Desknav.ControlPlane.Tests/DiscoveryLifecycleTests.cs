@@ -114,13 +114,6 @@ public sealed class DiscoveryLifecycleTests
             > firstPresentation.Revision.Value);
     }
 
-    public enum CommandSessionExit
-    {
-        Escape,
-        BaseLayer,
-        Disconnect,
-    }
-
     private static async Task AssertCurrentResultPresentsAsync(
         bool beginIncompletePointerPrefix,
         bool observeCommandLayerBeforeResult)
