@@ -5,39 +5,88 @@ namespace Desknav.ControlPlane;
 public sealed class NavigationCoordinator : ReceiveActor
 {
     private readonly IActorRef _targetDiscovery;
-    private readonly IActorRef _modeObserver;
+    private readonly IActorRef _inputObserver;
+    private CommandSessionState _commandState;
 
     public NavigationCoordinator(
         IActorRef targetDiscovery,
-        IActorRef modeObserver)
+        IActorRef inputObserver)
     {
         _targetDiscovery = targetDiscovery;
-        _modeObserver = modeObserver;
+        _inputObserver = inputObserver;
 
-        Receive<KeyboardModeObserved>(_modeObserver.Tell);
-        Receive<KeyboardModeUnavailable>(_modeObserver.Tell);
+        Receive<KeyboardLayerObserved>(Handle);
+        Receive<KeyboardLayerUnavailable>(Handle);
         Receive<GestureObserved>(Handle);
     }
 
     public static Props CreateProps(
         IActorRef targetDiscovery,
-        IActorRef modeObserver)
+        IActorRef inputObserver)
     {
         ArgumentNullException.ThrowIfNull(targetDiscovery);
-        ArgumentNullException.ThrowIfNull(modeObserver);
+        ArgumentNullException.ThrowIfNull(inputObserver);
         return Akka.Actor.Props.Create(
-            () => new NavigationCoordinator(targetDiscovery, modeObserver));
+            () => new NavigationCoordinator(targetDiscovery, inputObserver));
+    }
+
+    private void Handle(KeyboardLayerObserved observed)
+    {
+        _inputObserver.Tell(observed);
+        if (observed.Layer.Value == "base")
+        {
+            EndCommandSession();
+        }
+        else if (observed.Layer.Value == "command")
+        {
+            _commandState = CommandSessionState.Command;
+        }
+    }
+
+    private void Handle(KeyboardLayerUnavailable unavailable)
+    {
+        _inputObserver.Tell(unavailable);
+        EndCommandSession();
     }
 
     private void Handle(GestureObserved observed)
     {
-        if (observed.Token is { Context: "pointer", Key: "f" })
+        _inputObserver.Tell(new CommandInputObserved(observed.Token));
+
+        if (observed.Token.Key == "esc")
         {
-            _targetDiscovery.Tell(
-                new DiscoverTargets(TargetDiscoveryRequestId.New()));
+            EndCommandSession();
             return;
         }
 
-        Unhandled(observed);
+        if (observed.Token is { Context: "command", Key: "spc" })
+        {
+            _commandState = CommandSessionState.PointerPrefix;
+        }
+        else if (observed.Token is { Context: "pointer", Key: "f" }
+                 && _commandState == CommandSessionState.PointerPrefix)
+        {
+            _commandState = CommandSessionState.Command;
+            _targetDiscovery.Tell(
+                new DiscoverTargets(TargetDiscoveryRequestId.New()));
+        }
+    }
+
+    private void EndCommandSession()
+    {
+        if (_commandState == CommandSessionState.Inactive)
+        {
+            return;
+        }
+
+        _commandState = CommandSessionState.Inactive;
+        _inputObserver.Tell(new CommandSessionEnded());
+    }
+
+    private enum CommandSessionState
+    {
+        Inactive,
+        Command,
+        PointerPrefix,
     }
 }

@@ -65,28 +65,6 @@ public sealed class KanataSimulatorTests
     }
 
     [Theory]
-    [InlineData('h')]
-    [InlineData('j')]
-    [InlineData('k')]
-    [InlineData('l')]
-    public async Task MovementKeyWithoutSpaceCancelsPointerEntry(char key)
-    {
-        var probeKey = key is 'h' ? 'l' : 'h';
-
-        // Space would enter pointer if the movement key left the Caps prefix active.
-        var output = await RunSimulatorAsync(
-            $"{Tap("caps")} {Tap(key.ToString())} {Tap("spc")} "
-            + $"d:{probeKey} t:120 u:{probeKey} t:80");
-
-        Assert.Contains(KeyOutput('↓', key), output, StringComparison.Ordinal);
-        Assert.Contains(
-            KeyOutput('↓', probeKey),
-            output,
-            StringComparison.Ordinal);
-        Assert.Empty(MouseMoves(output));
-    }
-
-    [Theory]
     [InlineData("h", "j", "Down")]
     [InlineData("l", "k", "Up")]
     [InlineData("j", "h", "Left")]
@@ -135,10 +113,27 @@ public sealed class KanataSimulatorTests
     }
 
     [Fact]
-    public async Task TargetGesturePushesMessageAndReturnsToBase()
+    public async Task CommandLayerStreamsKeysUntilEscape()
     {
         var result = await RunSimulatorCommandAsync(
-            $"{EnterPointer()} {Tap("f")} {Tap("spc")} {Tap("h")}");
+            $"{Tap("caps")} {Tap("f")} {Tap("d")} {Tap("f")} "
+            + $"{Tap("d")} {Tap("f")} {Tap("l")} {Tap("esc")} {Tap("h")}");
+        var output = result.StandardOutput;
+
+        Assert.Equal(1, CountOccurrences(output, KeyOutput('↓', 'h')));
+        Assert.Equal(1, CountOccurrences(output, KeyOutput('↑', 'h')));
+        Assert.DoesNotContain(KeyOutput('↓', 'f'), output, StringComparison.Ordinal);
+        Assert.DoesNotContain(KeyOutput('↓', 'd'), output, StringComparison.Ordinal);
+        Assert.DoesNotContain(KeyOutput('↓', 'l'), output, StringComparison.Ordinal);
+        Assert.Empty(MouseMoves(output));
+        Assert.Equal(7, CountOccurrences(result.StandardError, "push-msg was used"));
+    }
+
+    [Fact]
+    public async Task TargetGesturePushesMessageAndReturnsToCommand()
+    {
+        var result = await RunSimulatorCommandAsync(
+            $"{EnterPointer()} {Tap("f")} {Tap("h")} {Tap("esc")} {Tap("h")}");
         var output = result.StandardOutput;
         var configLines = await File.ReadAllLinesAsync(
             Path.Combine(AppContext.BaseDirectory, "desknav.kbd"),
@@ -150,17 +145,23 @@ public sealed class KanataSimulatorTests
 
         Assert.DoesNotContain(KeyOutput('↓', 'f'), output, StringComparison.Ordinal);
         Assert.DoesNotContain(KeyOutput('↑', 'f'), output, StringComparison.Ordinal);
-        Assert.Contains("out:↓Space", output, StringComparison.Ordinal);
-        Assert.Contains("out:↑Space", output, StringComparison.Ordinal);
-        Assert.Contains(KeyOutput('↓', 'h'), output, StringComparison.Ordinal);
-        Assert.Contains(KeyOutput('↑', 'h'), output, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(output, KeyOutput('↓', 'h')));
+        Assert.Equal(1, CountOccurrences(output, KeyOutput('↑', 'h')));
         Assert.Empty(MouseMoves(output));
-        Assert.Contains(
-            "push-msg was used",
-            result.StandardError,
-            StringComparison.Ordinal);
+        Assert.Equal(4, CountOccurrences(result.StandardError, "push-msg was used"));
         Assert.Equal(
-            ["f (multi (push-msg gesture pointer f) (layer-switch base))"],
+            [
+                "spc (multi (push-msg gesture command spc) (layer-switch pointer))",
+                "esc (multi (push-msg gesture command esc) (layer-switch base))",
+                "f (push-msg gesture command f)",
+                "d (push-msg gesture command d)",
+                "h (push-msg gesture command h)",
+                "j (push-msg gesture command j)",
+                "k (push-msg gesture command k)",
+                "l (push-msg gesture command l)",
+                "esc (multi (push-msg gesture pointer esc) (layer-switch base))",
+                "f (multi (push-msg gesture pointer f) (layer-switch command))",
+            ],
             pushMessageBindings);
     }
 
@@ -251,6 +252,22 @@ public sealed class KanataSimulatorTests
         var markerIndex = output.IndexOf(marker, StringComparison.Ordinal);
         Assert.True(markerIndex >= 0, $"Missing marker: {marker}");
         return markerIndex;
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var startIndex = 0;
+        while ((startIndex = text.IndexOf(
+                   value,
+                   startIndex,
+                   StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            startIndex += value.Length;
+        }
+
+        return count;
     }
 
     private static MouseMove[] MouseMoves(string output) =>
