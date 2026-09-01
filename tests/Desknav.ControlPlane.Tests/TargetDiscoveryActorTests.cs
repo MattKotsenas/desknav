@@ -1,6 +1,8 @@
 using System.Threading.Channels;
 
 using Akka.Actor;
+using Akka.Configuration;
+using Akka.TestKit;
 
 using Desknav.ControlPlane;
 
@@ -8,6 +10,103 @@ namespace Desknav.ControlPlane.Tests;
 
 public sealed class TargetDiscoveryActorTests
 {
+    private static readonly TimeSpan OperationTimeout =
+        TimeSpan.FromMinutes(1);
+
+    [Fact]
+    public async Task OperationDisposalWaitsForExecution()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var timeout = new RecordingCancelable();
+        var execution = new TaskCompletionSource();
+        var operation =
+            new TargetDiscoveryActor.DiscoveryOperation(
+                cancellation,
+                timeout,
+                execution.Task);
+        Assert.False(timeout.IsDisposed);
+
+        var disposal = operation.DisposeAsync().AsTask();
+
+        Assert.False(disposal.IsCompleted);
+        execution.SetResult();
+        await disposal;
+
+        Assert.True(timeout.IsCancellationRequested);
+        Assert.True(timeout.IsDisposed);
+        Assert.Throws<ObjectDisposedException>(
+            () => _ = cancellation.Token);
+    }
+
+    [Fact]
+    public async Task OperationDisposalWaitsForCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var timeout = new RecordingCancelable();
+        var callbackStarted = new TaskCompletionSource();
+        var callbackRelease = new TaskCompletionSource();
+        using var registration = cancellation.Token.Register(
+            () =>
+            {
+                callbackStarted.SetResult();
+                callbackRelease.Task.GetAwaiter().GetResult();
+            });
+        var operation =
+            new TargetDiscoveryActor.DiscoveryOperation(
+                cancellation,
+                timeout,
+                Task.CompletedTask);
+        Assert.False(timeout.IsDisposed);
+
+        Assert.True(
+            operation.TryRequestCancellation(
+                out var cancellationTask));
+        await callbackStarted.Task;
+        var disposal = operation.DisposeAsync().AsTask();
+
+        Assert.False(disposal.IsCompleted);
+        callbackRelease.SetResult();
+        await cancellationTask;
+        await disposal;
+
+        Assert.True(timeout.IsCancellationRequested);
+        Assert.True(timeout.IsDisposed);
+        Assert.Throws<ObjectDisposedException>(
+            () => _ = cancellation.Token);
+    }
+
+    [Fact]
+    public async Task ReplacingTimeoutDisposesSupersededHandle()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var original = new RecordingCancelable();
+        var replacement = new RecordingCancelable();
+        var operation =
+            new TargetDiscoveryActor.DiscoveryOperation(
+                cancellation,
+                original,
+                Task.CompletedTask);
+        Assert.False(original.IsDisposed);
+
+        operation.ReplaceTimeout(replacement);
+
+        Assert.True(original.IsCancellationRequested);
+        Assert.True(original.IsDisposed);
+        Assert.False(replacement.IsCancellationRequested);
+
+        await operation.DisposeAsync();
+
+        Assert.True(replacement.IsCancellationRequested);
+        Assert.True(replacement.IsDisposed);
+        Assert.Throws<ObjectDisposedException>(
+            operation.CancelTimeout);
+        Assert.Throws<ObjectDisposedException>(
+            () => operation.ReplaceTimeout(
+                new RecordingCancelable()));
+        Assert.Throws<ObjectDisposedException>(
+            () => operation.TryRequestCancellation(out _));
+    }
+
     [Fact]
     public async Task CurrentDiscoveryReportsSnapshotWithRequestId()
     {
@@ -160,22 +259,44 @@ public sealed class TargetDiscoveryActorTests
     public async Task ConfiguredCancellationTimeoutFires()
     {
         await using var harness = new ActorHarness(
-            operationTimeout: TimeSpan.FromMilliseconds(100),
-            testTimeout: TimeSpan.FromSeconds(2));
+            operationTimeout: OperationTimeout,
+            useVirtualTime: true);
         var firstRequestId = TargetDiscoveryRequestId.New();
         var secondRequestId = TargetDiscoveryRequestId.New();
+        var supersededPendingRequestId = TargetDiscoveryRequestId.New();
         var pendingRequestId = TargetDiscoveryRequestId.New();
 
         harness.Actor.Tell(new DiscoverTargets(firstRequestId));
         var first = await harness.Discovery.ReadStartedCallAsync();
+        harness.Scheduler.Advance(OperationTimeout / 2);
         harness.Actor.Tell(new CancelTargetDiscovery(firstRequestId));
         await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
+        await harness.FlushActorAsync();
 
         harness.Actor.Tell(new DiscoverTargets(secondRequestId));
         var second = await harness.Discovery.ReadStartedCallAsync();
         harness.Actor.Tell(new CancelTargetDiscovery(secondRequestId));
         await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
+        await harness.FlushActorAsync();
+        harness.Actor.Tell(
+            new DiscoverTargets(supersededPendingRequestId));
+        await harness.FlushActorAsync();
+
+        harness.Scheduler.Advance(OperationTimeout / 2);
+        harness.Actor.Tell(
+            new CancelTargetDiscovery(firstRequestId));
+        await harness.FlushActorAsync();
+        harness.Scheduler.Advance(
+            OperationTimeout / 2 - TimeSpan.FromTicks(1));
         harness.Actor.Tell(new DiscoverTargets(pendingRequestId));
+        // This response proves the pending request was handled before expiry.
+        var superseded =
+            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();
+        Assert.Equal(
+            supersededPendingRequestId,
+            superseded.RequestId);
+
+        harness.Scheduler.Advance(TimeSpan.FromTicks(1));
 
         var failures = new[]
         {
@@ -323,21 +444,39 @@ public sealed class TargetDiscoveryActorTests
     public async Task ConfiguredOperationTimeoutFires()
     {
         await using var harness = new ActorHarness(
-            operationTimeout: TimeSpan.FromMilliseconds(100),
-            testTimeout: TimeSpan.FromSeconds(2));
-        var requestId = TargetDiscoveryRequestId.New();
+            operationTimeout: OperationTimeout,
+            useVirtualTime: true);
+        var firstRequestId = TargetDiscoveryRequestId.New();
+        var secondRequestId = TargetDiscoveryRequestId.New();
 
-        harness.Actor.Tell(new DiscoverTargets(requestId));
-        var call = await harness.Discovery.ReadStartedCallAsync();
+        harness.Actor.Tell(new DiscoverTargets(firstRequestId));
+        var first = await harness.Discovery.ReadStartedCallAsync();
+        harness.Scheduler.Advance(
+            OperationTimeout - TimeSpan.FromTicks(1));
 
-        var failed =
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();
-        var canceled =
-            await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
-        Assert.Equal(requestId, failed.RequestId);
-        Assert.Same(call, canceled.Call);
+        harness.Actor.Tell(new DiscoverTargets(secondRequestId));
+        var second = await harness.Discovery.ReadStartedCallAsync();
+        harness.Scheduler.Advance(TimeSpan.FromTicks(1));
 
-        call.Complete();
+        var failures = new[]
+        {
+            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
+        };
+        var canceled = new[]
+        {
+            await harness.Discovery.ReadEventAsync<DiscoveryCanceled>(),
+            await harness.Discovery.ReadEventAsync<DiscoveryCanceled>(),
+        };
+        AssertFailedRequestIds(
+            failures,
+            firstRequestId,
+            secondRequestId);
+        Assert.Contains(first, canceled.Select(item => item.Call));
+        Assert.Contains(second, canceled.Select(item => item.Call));
+
+        first.Complete();
+        second.Complete();
     }
 
     [Fact]
@@ -553,6 +692,13 @@ public sealed class TargetDiscoveryActorTests
 
     private sealed class ActorHarness : IAsyncDisposable
     {
+        private static readonly Config TestSchedulerConfig =
+            ConfigurationFactory.ParseString(
+                """
+                akka.scheduler.implementation =
+                    "Akka.TestKit.TestScheduler, Akka.TestKit"
+                """);
+
         private readonly Channel<object> _coordinatorMessages =
             Channel.CreateBounded<object>(
                 new BoundedChannelOptions(4)
@@ -568,12 +714,14 @@ public sealed class TargetDiscoveryActorTests
             bool blockSynchronousPrefix = false,
             bool blockCancellationCallback = false,
             TimeSpan? operationTimeout = null,
-            TimeSpan? testTimeout = null)
+            bool useVirtualTime = false)
         {
-            _timeout = new CancellationTokenSource(
-                testTimeout ?? TimeSpan.FromSeconds(10));
-            System = ActorSystem.Create(
-                $"target-discovery-{Guid.NewGuid():N}");
+            _timeout =
+                new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var systemName = $"target-discovery-{Guid.NewGuid():N}";
+            System = useVirtualTime
+                ? ActorSystem.Create(systemName, TestSchedulerConfig)
+                : ActorSystem.Create(systemName);
             Discovery = new ControllableTargetDiscovery(
                 _timeout.Token,
                 throwOnCancellation,
@@ -596,11 +744,19 @@ public sealed class TargetDiscoveryActorTests
 
         public ControllableTargetDiscovery Discovery { get; }
 
+        public TestScheduler Scheduler =>
+            (TestScheduler)System.Scheduler;
+
         public CancellationToken TimeoutToken => _timeout.Token;
 
         public async Task<T> ReadCoordinatorAsync<T>() =>
             Assert.IsType<T>(
                 await _coordinatorMessages.Reader.ReadAsync(TimeoutToken));
+
+        public async Task FlushActorAsync() =>
+            await Actor.Ask<ActorIdentity>(
+                new Identify(null),
+                TimeoutToken);
 
         public async Task AssertNoMoreCoordinatorMessagesAsync()
         {
@@ -611,15 +767,25 @@ public sealed class TargetDiscoveryActorTests
 
         public async Task AssertNoMoreDiscoveryEventsAsync()
         {
-            await System.Terminate();
+            await System.Terminate().WaitAsync(TimeoutToken);
             Discovery.CompleteEvents();
             await Discovery.EventsCompletion.WaitAsync(TimeoutToken);
         }
 
         public async ValueTask DisposeAsync()
         {
-            await System.Terminate();
-            _timeout.Dispose();
+            using var cleanupTimeout =
+                new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try
+            {
+                await System
+                    .Terminate()
+                    .WaitAsync(cleanupTimeout.Token);
+            }
+            finally
+            {
+                _timeout.Dispose();
+            }
         }
     }
 
@@ -785,6 +951,36 @@ public sealed class TargetDiscoveryActorTests
 
     private sealed record DiscoveryCanceled(DiscoveryCall Call)
         : DiscoveryEvent;
+
+    private sealed class RecordingCancelable : ICancelable, IDisposable
+    {
+        public bool IsCancellationRequested { get; private set; }
+
+        public bool IsDisposed { get; private set; }
+
+        public CancellationToken Token =>
+            throw new NotSupportedException();
+
+        public void Cancel()
+        {
+            ObjectDisposedException.ThrowIf(IsDisposed, this);
+            IsCancellationRequested = true;
+        }
+
+        public void Cancel(bool throwOnFirstException) => Cancel();
+
+        public void CancelAfter(TimeSpan delay)
+        {
+            throw new NotSupportedException();
+        }
+
+        public void CancelAfter(int millisecondsDelay)
+        {
+            throw new NotSupportedException();
+        }
+
+        public void Dispose() => IsDisposed = true;
+    }
 
     private static async Task<(
         DiscoveryCanceled Canceled,

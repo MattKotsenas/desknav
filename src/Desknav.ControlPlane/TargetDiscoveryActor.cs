@@ -61,8 +61,8 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     {
         foreach (var operation in _operations.Values)
         {
-            operation.Timeout.Cancel();
-            _ = CancelDuringShutdownAsync(operation.Cancellation);
+            operation.CancelTimeout();
+            _ = CancelDuringShutdownAsync(operation);
         }
 
         base.PostStop();
@@ -117,17 +117,18 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
             Self,
             new OperationTimedOut(requestId),
             Self);
-        var operation = new DiscoveryOperation(cancellation, timeout);
+        var execution = Task.Run(
+            () => RunDiscoveryAsync(
+                requestId,
+                cancellation.Token));
+        var operation =
+            new DiscoveryOperation(cancellation, timeout, execution);
         _operations.Add(requestId, operation);
-        Task.Run(
-                () => RunDiscoveryAsync(
-                    requestId,
-                    operation.Cancellation))
-            .PipeTo(
-                Self,
-                Self,
-                failure: exception =>
-                    new DiscoveryFaulted(requestId, exception));
+        execution.PipeTo(
+            Self,
+            Self,
+            failure: exception =>
+                new DiscoveryFaulted(requestId, exception));
     }
 
     private void Handle(CancelTargetDiscovery cancel)
@@ -140,23 +141,19 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
         if (_operations.TryGetValue(cancel.RequestId, out var operation))
         {
-            if (operation.CancellationRequested)
+            if (operation.TryRequestCancellation(out var cancellation))
             {
-                return;
-            }
-
-            operation.CancellationRequested = true;
-            operation.Timeout.Cancel();
-            operation.Timeout =
-                Context.System.Scheduler.ScheduleTellOnceCancelable(
-                    _operationTimeout,
-                    Self,
-                    new CancellationTimedOut(cancel.RequestId),
+                operation.ReplaceTimeout(
+                    Context.System.Scheduler.ScheduleTellOnceCancelable(
+                        _operationTimeout,
+                        Self,
+                        new CancellationTimedOut(cancel.RequestId),
+                        Self));
+                _ = ObserveCancellationAsync(
+                    cancel.RequestId,
+                    cancellation,
                     Self);
-            _ = RequestCancellationAsync(
-                cancel.RequestId,
-                operation.Cancellation,
-                Self);
+            }
         }
     }
 
@@ -169,7 +166,10 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
             return;
         }
 
-        operation.Timeout.Cancel();
+        _ = ReleaseOperationAsync(
+            finished.RequestId,
+            operation,
+            Self);
         if (_isTerminating || _isUnavailable)
         {
             return;
@@ -197,7 +197,10 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     {
         if (_operations.Remove(faulted.RequestId, out var operation))
         {
-            operation.Timeout.Cancel();
+            _ = ReleaseOperationAsync(
+                faulted.RequestId,
+                operation,
+                Self);
         }
 
         if (_isUnavailable)
@@ -273,11 +276,14 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
         foreach (var (requestId, operation) in _operations)
         {
-            operation.Timeout.Cancel();
-            _ = RequestCancellationAsync(
-                requestId,
-                operation.Cancellation,
-                Self);
+            operation.CancelTimeout();
+            if (operation.TryRequestCancellation(out var cancellation))
+            {
+                _ = ObserveCancellationAsync(
+                    requestId,
+                    cancellation,
+                    Self);
+            }
             _coordinator.Tell(new TargetDiscoveryFailed(requestId));
         }
 
@@ -315,18 +321,14 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         StartDiscovery(requestId);
     }
 
-    private static async Task RequestCancellationAsync(
+    private static async Task ObserveCancellationAsync(
         TargetDiscoveryRequestId requestId,
-        CancellationTokenSource operation,
+        Task cancellation,
         IActorRef owner)
     {
         try
         {
-            await operation.CancelAsync().ConfigureAwait(false);
-        }
-        catch (ObjectDisposedException)
-        {
-            return;
+            await cancellation.ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -337,17 +339,14 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     }
 
     private async Task CancelDuringShutdownAsync(
-        CancellationTokenSource operation)
+        DiscoveryOperation operation)
     {
         try
         {
-            await operation.CancelAsync().ConfigureAwait(false);
-        }
-        catch (ObjectDisposedException)
-        {
-            _log.Debug(
-                "Target discovery ended before shutdown cancellation"
-                + " reached it.");
+            if (operation.TryRequestCancellation(out var cancellation))
+            {
+                await cancellation.ConfigureAwait(false);
+            }
         }
         catch (Exception exception)
         {
@@ -355,23 +354,54 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
                 exception,
                 "Target discovery cancellation failed during shutdown.");
         }
+        finally
+        {
+            try
+            {
+                await operation.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(
+                    exception,
+                    "Target discovery cleanup failed during shutdown.");
+            }
+        }
+    }
+
+    private static async Task ReleaseOperationAsync(
+        TargetDiscoveryRequestId requestId,
+        DiscoveryOperation operation,
+        IActorRef owner)
+    {
+        try
+        {
+            await operation.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            owner.Tell(
+                new DiscoveryFaulted(requestId, exception),
+                owner);
+        }
     }
 
     private async Task<DiscoveryFinished> RunDiscoveryAsync(
         TargetDiscoveryRequestId requestId,
-        CancellationTokenSource operation)
+        CancellationToken cancellationToken)
     {
         try
         {
             var result = await _discovery
-                .DiscoverAsync(operation.Token)
+                .DiscoverAsync(cancellationToken)
                 .ConfigureAwait(false);
             return new DiscoveryFinished(
                 requestId,
-                operation.IsCancellationRequested,
+                cancellationToken.IsCancellationRequested,
                 result);
         }
-        catch (Exception exception) when (operation.IsCancellationRequested)
+        catch (Exception exception)
+            when (cancellationToken.IsCancellationRequested)
         {
             _log.Debug(
                 exception,
@@ -382,10 +412,6 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
                 requestId,
                 WasCancellationRequested: true,
                 TargetDiscoveryResult.Failed);
-        }
-        finally
-        {
-            operation.Dispose();
         }
     }
 
@@ -427,21 +453,84 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         TargetDiscoveryRequestId RequestId);
 
     /// <summary>
-    /// Keeps cancellation and its scheduled deadline together for one running
-    /// operation.
+    /// Owns the execution, cancellation, and scheduled timeout resources for
+    /// one running discovery.
     /// </summary>
-    private sealed class DiscoveryOperation(
+    // Internal so resource lifetime can be tested without actor timing.
+    internal sealed class DiscoveryOperation(
         CancellationTokenSource cancellation,
-        ICancelable timeout)
+        ICancelable timeout,
+        Task execution)
+        : IAsyncDisposable
     {
-        public CancellationTokenSource Cancellation { get; } =
-            cancellation;
+        private ICancelable _timeout = timeout;
+        private Task _cancellation = Task.CompletedTask;
+        private bool _isDisposed;
 
-        public ICancelable Timeout { get; set; } = timeout;
-
-        public bool CancellationRequested { get; set; }
+        public bool CancellationRequested { get; private set; }
 
         public bool CancellationExpired { get; set; }
+
+        public bool TryRequestCancellation(out Task cancellationTask)
+        {
+            ThrowIfDisposed();
+            if (CancellationRequested)
+            {
+                cancellationTask = _cancellation;
+                return false;
+            }
+
+            CancellationRequested = true;
+            _cancellation = cancellation.CancelAsync();
+            cancellationTask = _cancellation;
+            return true;
+        }
+
+        public void ReplaceTimeout(ICancelable replacement)
+        {
+            ThrowIfDisposed();
+            ReleaseTimeout();
+            _timeout = replacement;
+        }
+
+        public void CancelTimeout()
+        {
+            ThrowIfDisposed();
+            _timeout.Cancel();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (_isDisposed)
+            {
+                return;
+            }
+
+            ReleaseTimeout();
+            _isDisposed = true;
+            await execution.ConfigureAwait(
+                ConfigureAwaitOptions.SuppressThrowing);
+            await _cancellation.ConfigureAwait(
+                ConfigureAwaitOptions.SuppressThrowing);
+            cancellation.Dispose();
+        }
+
+        private void DisposeTimeout()
+        {
+            if (_timeout is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
+
+        private void ReleaseTimeout()
+        {
+            _timeout.Cancel();
+            DisposeTimeout();
+        }
+
+        private void ThrowIfDisposed() =>
+            ObjectDisposedException.ThrowIf(_isDisposed, this);
     }
 }
 
