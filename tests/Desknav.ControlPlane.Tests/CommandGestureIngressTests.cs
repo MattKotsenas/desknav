@@ -549,24 +549,4 @@ public sealed class CommandGestureIngressTests
         ChannelReader<object> reader,
         CancellationToken cancellationToken) =>
         await reader.Completion.WaitAsync(cancellationToken);
-
-    private sealed class RecordingActor : ReceiveActor
-    {
-        private readonly ChannelWriter<object> _writer;
-
-        public RecordingActor(ChannelWriter<object> writer)
-        {
-            _writer = writer;
-            ReceiveAny(message =>
-            {
-                if (!_writer.TryWrite(message))
-                {
-                    throw new InvalidOperationException(
-                        "The test recorder rejected a control-plane message.");
-                }
-            });
-        }
-
-        protected override void PostStop() => _writer.TryComplete();
-    }
 }

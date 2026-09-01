@@ -94,6 +94,24 @@ internal static class NavigationWorkflow
                 completed.Snapshot));
     }
 
+    public static NavigationDecision Decide(
+        NavigationWorkflowState state,
+        TargetDiscoveryFailed failed)
+    {
+        if (state.TargetDiscovery is not TargetDiscoveryLifecycle.Active active
+            || active.RequestId != failed.RequestId)
+        {
+            return Decision(state);
+        }
+
+        return Decision(
+            state with
+            {
+                TargetDiscovery =
+                    new TargetDiscoveryLifecycle.Idle(active.Generation),
+            });
+    }
+
     private static NavigationDecision StartTargetDiscovery(
         NavigationWorkflowState state,
         TargetDiscoveryRequestId nextRequestId,

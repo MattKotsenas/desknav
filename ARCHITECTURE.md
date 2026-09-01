@@ -161,6 +161,20 @@ read-only UIA work, reports snapshots with their request identity, and never
 sends discovery results directly to presentation. Explicit UIA actions belong
 to the one-shot-action owner and carry an operation identity.
 
+Target discovery bounds concurrent enumeration while allowing a replacement
+to overlap a canceled predecessor. At capacity, the owner retains only the
+newest pending request, reports an expected failure for pending work it
+replaces, and starts the retained request when running work ends.
+
+The owner becomes unavailable if an enumeration exceeds its configured
+operation timeout, or if every operation slot remains occupied after
+cancellation unwind budgets expire. It reports expected failure for running
+and pending requests, and the same outcome for each new request until process
+restart. A canceled operation receives a fresh unwind budget; one predecessor
+may retain its slot after that budget expires while other work continues. The
+coordinator sees only request-identified outcomes, never the concurrency bound
+or pending request.
+
 ## Interaction paths
 
 ### Continuous physical input
@@ -212,9 +226,10 @@ prior discovery obsolete, sends its cancellation before the new request, and
 does not wait for cancellation completion. Command-session exit makes active
 discovery obsolete and dispatches its cancellation.
 
-A target result maps to the current workflow only when its request ID matches
-the active discovery. Obsolete and duplicate results do not affect
-presentation.
+A target result or expected failure maps to the current workflow only when its
+request ID matches the active discovery. Obsolete and duplicate outcomes do
+not affect presentation. A current expected failure ends discovery without
+producing a presentation request.
 
 When it accepts a current result, the coordinator allocates and owns the next
 presentation revision and sends the revisioned snapshot to the overlay owner.
@@ -250,9 +265,9 @@ its current layer.
 ## Failure and recovery
 
 Boundary owners translate expected timeouts, refusals, disconnects, and
-restarts of Kanata, Desknav UI, or Komorebi into observations and operation
-outcomes. The coordinator handles their workflow meaning. Each expected
-failure has an explicit outcome and recovery path.
+restarts of Kanata, UI Automation, Desknav UI, or Komorebi into observations
+and operation outcomes. The coordinator handles their workflow meaning. Each
+expected failure has an explicit outcome and recovery path.
 
 A refusal, or a cancellation confirmed before dispatch, is known not to have
 produced its requested effect. If a one-shot operation may have occurred but

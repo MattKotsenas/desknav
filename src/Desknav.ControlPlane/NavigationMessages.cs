@@ -36,6 +36,9 @@ public sealed record TargetSnapshot(TargetDiscoveryRequestId RequestId);
 
 public sealed record TargetDiscoveryCompleted(TargetSnapshot Snapshot);
 
+public sealed record TargetDiscoveryFailed(
+    TargetDiscoveryRequestId RequestId);
+
 public sealed record PresentTargets(
     PresentationRevision Revision,
     TargetSnapshot Snapshot);

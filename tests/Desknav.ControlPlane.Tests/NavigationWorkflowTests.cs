@@ -129,6 +129,42 @@ public sealed class NavigationWorkflowTests
     }
 
     [Fact]
+    public void CurrentDiscoveryFailureEndsDiscovery()
+    {
+        var state = ActiveState(FirstRequestId) with
+        {
+            LastPresentationRevision = PresentationRevision.From(4),
+        };
+
+        var decision = NavigationWorkflow.Decide(
+            state,
+            new TargetDiscoveryFailed(FirstRequestId));
+
+        Assert.Equal(
+            state with
+            {
+                TargetDiscovery =
+                    new TargetDiscoveryLifecycle.Idle(
+                        WorkflowGeneration.From(1)),
+            },
+            decision.State);
+        Assert.Empty(decision.Effects);
+    }
+
+    [Fact]
+    public void StaleDiscoveryFailureLeavesWorkflowUnchanged()
+    {
+        var state = ActiveState(SecondRequestId);
+
+        var decision = NavigationWorkflow.Decide(
+            state,
+            new TargetDiscoveryFailed(FirstRequestId));
+
+        Assert.Equal(state, decision.State);
+        Assert.Empty(decision.Effects);
+    }
+
+    [Fact]
     public void CurrentResultAdvancesPresentationAndBecomesDuplicate()
     {
         var state = ActiveState(FirstRequestId) with
