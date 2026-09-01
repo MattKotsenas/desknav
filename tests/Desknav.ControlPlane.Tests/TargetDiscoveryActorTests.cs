@@ -183,9 +183,11 @@ public sealed class TargetDiscoveryActorTests
             await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
             await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
         };
-        Assert.Contains(
-            pendingRequestId,
-            failures.Select(failure => failure.RequestId));
+        AssertFailedRequestIds(
+            failures,
+            firstRequestId,
+            secondRequestId,
+            pendingRequestId);
 
         first.Complete();
         second.Complete();
@@ -366,16 +368,11 @@ public sealed class TargetDiscoveryActorTests
             await harness.Discovery.ReadEventAsync<DiscoveryCanceled>(),
         };
 
-        var expectedFailures =
-            new HashSet<TargetDiscoveryRequestId>
-            {
-                firstRequestId,
-                secondRequestId,
-                pendingRequestId,
-            };
-        Assert.True(
-            expectedFailures.SetEquals(
-                failures.Select(failure => failure.RequestId)));
+        AssertFailedRequestIds(
+            failures,
+            firstRequestId,
+            secondRequestId,
+            pendingRequestId);
         Assert.Contains(first, canceled.Select(item => item.Call));
         Assert.Contains(second, canceled.Select(item => item.Call));
 
@@ -473,15 +470,11 @@ public sealed class TargetDiscoveryActorTests
             await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
             await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
         };
-        var expectedFailures = new HashSet<TargetDiscoveryRequestId>
-        {
+        AssertFailedRequestIds(
+            failures,
             firstRequestId,
             secondRequestId,
-            pendingRequestId,
-        };
-        Assert.True(
-            expectedFailures.SetEquals(
-                failures.Select(failure => failure.RequestId)));
+            pendingRequestId);
 
         var futureRequestId = TargetDiscoveryRequestId.New();
         harness.Actor.Tell(
@@ -808,5 +801,35 @@ public sealed class TargetDiscoveryActorTests
         var started = Assert.Single(
             events.OfType<DiscoveryStarted>());
         return (canceled, started.Call);
+    }
+
+    private static void AssertFailedRequestIds(
+        IEnumerable<TargetDiscoveryFailed> failures,
+        params TargetDiscoveryRequestId[] expected)
+    {
+        var actual = failures
+            .Select(failure => failure.RequestId)
+            .ToHashSet();
+        if (actual.SetEquals(expected))
+        {
+            return;
+        }
+
+        var missing = expected.Except(actual);
+        var unexpected = actual.Except(expected);
+        Assert.Fail(
+            $"Failed request IDs - missing: {FormatRequestIds(missing)};"
+            + $" unexpected: {FormatRequestIds(unexpected)}.");
+    }
+
+    private static string FormatRequestIds(
+        IEnumerable<TargetDiscoveryRequestId> requestIds)
+    {
+        var formatted = string.Join(
+            ", ",
+            requestIds
+                .Select(requestId => requestId.Value)
+                .Order());
+        return formatted.Length == 0 ? "(none)" : formatted;
     }
 }
