@@ -5,7 +5,8 @@ namespace Desknav.ControlPlane;
 
 /// <summary>
 /// Owns scheduling and cancellation of target enumeration for the UI
-/// Automation boundary.
+/// Automation boundary. Reports successful and expected-failure outcomes
+/// to its parent.
 /// </summary>
 internal sealed class TargetDiscoveryActor : ReceiveActor
 {
@@ -23,11 +24,10 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     private bool _isUnavailable;
 
     public TargetDiscoveryActor(
-        IActorRef coordinator,
         ITargetDiscovery discovery,
         TimeSpan operationTimeout)
     {
-        _coordinator = coordinator;
+        _coordinator = Context.Parent;
         _discovery = discovery;
         _operationTimeout = operationTimeout;
 
@@ -41,18 +41,15 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     }
 
     public static Props CreateProps(
-        IActorRef coordinator,
         ITargetDiscovery discovery,
         TimeSpan operationTimeout)
     {
-        ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(discovery);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
             operationTimeout,
             TimeSpan.Zero);
         return Props.Create(
             () => new TargetDiscoveryActor(
-                coordinator,
                 discovery,
                 operationTimeout));
     }

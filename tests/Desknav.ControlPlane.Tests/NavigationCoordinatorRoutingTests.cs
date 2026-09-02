@@ -23,7 +23,7 @@ public sealed class NavigationCoordinatorRoutingTests
                     () => new RecordingActor(presentations.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    RecordingActor.CreatePropsFactory(
+                    RecordingActor.CreateProps(
                         targetDiscovery.Writer),
                     ActorRefs.Nobody,
                     overlayOwner));

@@ -21,9 +21,8 @@ internal sealed class RecordingActor : ReceiveActor
         });
     }
 
-    public static Func<IActorRef, Props> CreatePropsFactory(
-        ChannelWriter<object> writer) =>
-        _ => Props.Create(() => new RecordingActor(writer));
+    public static Props CreateProps(ChannelWriter<object> writer) =>
+        Props.Create(() => new RecordingActor(writer));
 
     public static Channel<object> CreateChannel(int capacity) =>
         Channel.CreateBounded<object>(

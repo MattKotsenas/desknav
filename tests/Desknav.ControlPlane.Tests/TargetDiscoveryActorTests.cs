@@ -110,7 +110,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task CurrentDiscoveryReportsSnapshotWithRequestId()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var requestId = TargetDiscoveryRequestId.New();
 
         harness.Actor.Tell(new DiscoverTargets(requestId));
@@ -125,7 +125,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task ReplacementStartsBeforeCancellationCompletes()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var firstRequestId = TargetDiscoveryRequestId.New();
         var secondRequestId = TargetDiscoveryRequestId.New();
 
@@ -153,7 +153,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task PendingDiscoveryCoalescesToNewestRequest()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var firstRequestId = TargetDiscoveryRequestId.New();
         var secondRequestId = TargetDiscoveryRequestId.New();
         var supersededPendingRequestId = TargetDiscoveryRequestId.New();
@@ -195,7 +195,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task CanceledPendingDiscoveryNeverStarts()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var firstRequestId = TargetDiscoveryRequestId.New();
         var secondRequestId = TargetDiscoveryRequestId.New();
         var pendingRequestId = TargetDiscoveryRequestId.New();
@@ -241,7 +241,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task StoppingActorCancelsInFlightDiscovery()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
 
         harness.Actor.Tell(
             new DiscoverTargets(TargetDiscoveryRequestId.New()));
@@ -258,7 +258,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task ConfiguredCancellationTimeoutFires()
     {
-        await using var harness = new ActorHarness(
+        await using var harness = await ActorHarness.CreateAsync(
             operationTimeout: OperationTimeout,
             useVirtualTime: true);
         var firstRequestId = TargetDiscoveryRequestId.New();
@@ -317,7 +317,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task BlockingDiscoveryPrefixDoesNotDelayCancellation()
     {
-        await using var harness = new ActorHarness(
+        await using var harness = await ActorHarness.CreateAsync(
             blockSynchronousPrefix: true);
         var requestId = TargetDiscoveryRequestId.New();
 
@@ -336,7 +336,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task BlockingCancellationCallbackDoesNotDelayReplacement()
     {
-        await using var harness = new ActorHarness(
+        await using var harness = await ActorHarness.CreateAsync(
             blockCancellationCallback: true);
         var firstRequestId = TargetDiscoveryRequestId.New();
         var secondRequestId = TargetDiscoveryRequestId.New();
@@ -359,7 +359,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task CanceledFaultStaysSilentAndNextRequestCompletes()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var firstRequestId = TargetDiscoveryRequestId.New();
         var secondRequestId = TargetDiscoveryRequestId.New();
 
@@ -385,7 +385,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task UnexpectedDiscoveryFailureTerminatesActorSystem()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
 
         harness.Actor.Tell(
             new DiscoverTargets(TargetDiscoveryRequestId.New()));
@@ -399,7 +399,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task ExpectedDiscoveryFailureReportsRequestId()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var requestId = TargetDiscoveryRequestId.New();
 
         harness.Actor.Tell(new DiscoverTargets(requestId));
@@ -414,7 +414,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task OperationTimeoutFailsCurrentAndFutureRequests()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var timedOutRequestId = TargetDiscoveryRequestId.New();
         var nextRequestId = TargetDiscoveryRequestId.New();
 
@@ -443,7 +443,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task ConfiguredOperationTimeoutFires()
     {
-        await using var harness = new ActorHarness(
+        await using var harness = await ActorHarness.CreateAsync(
             operationTimeout: OperationTimeout,
             useVirtualTime: true);
         var firstRequestId = TargetDiscoveryRequestId.New();
@@ -482,7 +482,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task TimeoutFailsRunningAndPendingRequests()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var firstRequestId = TargetDiscoveryRequestId.New();
         var secondRequestId = TargetDiscoveryRequestId.New();
         var pendingRequestId = TargetDiscoveryRequestId.New();
@@ -522,7 +522,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task CanceledPredecessorTimeoutDoesNotFailCurrentRequest()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var predecessorRequestId = TargetDiscoveryRequestId.New();
         var currentRequestId = TargetDiscoveryRequestId.New();
         var nextRequestId = TargetDiscoveryRequestId.New();
@@ -556,7 +556,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task SoleExpiredCancellationLeavesOneSlotAvailable()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var predecessorRequestId = TargetDiscoveryRequestId.New();
         var nextRequestId = TargetDiscoveryRequestId.New();
 
@@ -582,7 +582,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task ExhaustedCancellationBudgetsFailPendingRequest()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var firstRequestId = TargetDiscoveryRequestId.New();
         var secondRequestId = TargetDiscoveryRequestId.New();
         var pendingRequestId = TargetDiscoveryRequestId.New();
@@ -633,7 +633,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task CancellationCallbackFailureTerminatesActorSystem()
     {
-        await using var harness = new ActorHarness(
+        await using var harness = await ActorHarness.CreateAsync(
             throwOnCancellation: true);
         var requestId = TargetDiscoveryRequestId.New();
 
@@ -649,7 +649,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task DuplicateRequestIdTerminatesActorSystem()
     {
-        await using var harness = new ActorHarness();
+        await using var harness = await ActorHarness.CreateAsync();
         var requestId = TargetDiscoveryRequestId.New();
 
         harness.Actor.Tell(new DiscoverTargets(requestId));
@@ -666,7 +666,7 @@ public sealed class TargetDiscoveryActorTests
     [Fact]
     public async Task ShutdownCancelsEveryOperationWhenCallbacksThrow()
     {
-        await using var harness = new ActorHarness(
+        await using var harness = await ActorHarness.CreateAsync(
             throwOnCancellation: true);
 
         harness.Actor.Tell(
@@ -703,13 +703,14 @@ public sealed class TargetDiscoveryActorTests
             RecordingActor.CreateChannel(4);
         private readonly CancellationTokenSource _timeout;
         private readonly IActorRef _coordinator;
+        private readonly IActorRef _parent;
 
-        public ActorHarness(
-            bool throwOnCancellation = false,
-            bool blockSynchronousPrefix = false,
-            bool blockCancellationCallback = false,
-            TimeSpan? operationTimeout = null,
-            bool useVirtualTime = false)
+        private ActorHarness(
+            bool throwOnCancellation,
+            bool blockSynchronousPrefix,
+            bool blockCancellationCallback,
+            TimeSpan? operationTimeout,
+            bool useVirtualTime)
         {
             _timeout =
                 new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -726,16 +727,19 @@ public sealed class TargetDiscoveryActorTests
                 Props.Create(
                     () => new RecordingActor(
                         _coordinatorMessages.Writer)));
-            Actor = System.ActorOf(
-                TargetDiscoveryActor.CreateProps(
-                    _coordinator,
-                    Discovery,
-                    operationTimeout ?? TimeSpan.FromHours(1)));
+            _parent = System.ActorOf(
+                Props.Create(
+                    () => new TargetDiscoveryTestParent(
+                        TargetDiscoveryActor.CreateProps(
+                            Discovery,
+                            operationTimeout ?? TimeSpan.FromHours(1)),
+                        _coordinator)));
         }
 
         public ActorSystem System { get; }
 
-        public IActorRef Actor { get; }
+        public IActorRef Actor { get; private set; } =
+            ActorRefs.Nobody;
 
         public ControllableTargetDiscovery Discovery { get; }
 
@@ -747,6 +751,35 @@ public sealed class TargetDiscoveryActorTests
         public async Task<T> ReadCoordinatorAsync<T>() =>
             Assert.IsType<T>(
                 await _coordinatorMessages.Reader.ReadAsync(TimeoutToken));
+
+        public static async Task<ActorHarness> CreateAsync(
+            bool throwOnCancellation = false,
+            bool blockSynchronousPrefix = false,
+            bool blockCancellationCallback = false,
+            TimeSpan? operationTimeout = null,
+            bool useVirtualTime = false)
+        {
+            var harness = new ActorHarness(
+                throwOnCancellation,
+                blockSynchronousPrefix,
+                blockCancellationCallback,
+                operationTimeout,
+                useVirtualTime);
+            try
+            {
+                harness.Actor =
+                    await ActorTestHelpers.ResolveTargetDiscoveryAsync(
+                        harness.System,
+                        harness._parent,
+                        harness.TimeoutToken);
+                return harness;
+            }
+            catch
+            {
+                await harness.DisposeAsync();
+                throw;
+            }
+        }
 
         public async Task FlushActorAsync() =>
             await ActorTestHelpers.FlushAsync(Actor, TimeoutToken);
@@ -780,6 +813,31 @@ public sealed class TargetDiscoveryActorTests
                 _timeout.Dispose();
             }
         }
+    }
+
+    private sealed class TargetDiscoveryTestParent : ReceiveActor
+    {
+        private readonly IActorRef _coordinator;
+
+        public TargetDiscoveryTestParent(
+            Props targetDiscoveryProps,
+            IActorRef coordinator)
+        {
+            Context.ActorOf(
+                targetDiscoveryProps,
+                "target-discovery");
+            _coordinator = coordinator;
+
+            ReceiveAny(message => _coordinator.Forward(message));
+        }
+
+        protected override SupervisorStrategy SupervisorStrategy() =>
+            new OneForOneStrategy(
+                _ =>
+                {
+                    Context.System.Terminate();
+                    return Directive.Stop;
+                });
     }
 
     private sealed class RecordingCancelable : ICancelable, IDisposable

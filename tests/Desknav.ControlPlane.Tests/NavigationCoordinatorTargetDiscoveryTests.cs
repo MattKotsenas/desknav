@@ -26,8 +26,7 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
                     () => new RecordingActor(presentations.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    owner => TargetDiscoveryActor.CreateProps(
-                        owner,
+                    TargetDiscoveryActor.CreateProps(
                         discovery,
                         TimeSpan.FromHours(1)),
                     ActorRefs.Nobody,
@@ -83,19 +82,19 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
     }
 
     [Fact]
-    public async Task PropsFailureTerminatesActorSystem()
+    public async Task OwnerConstructionFailureTerminatesActorSystem()
     {
         using var timeout =
             new CancellationTokenSource(TestTimeout);
         var system = ActorSystem.Create(
-            $"target-discovery-props-failure-{Guid.NewGuid():N}");
+            $"target-discovery-construction-failure-{Guid.NewGuid():N}");
 
         try
         {
             system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    _ => throw new InvalidOperationException(
-                        "Target discovery props failed."),
+                    Props.Create(
+                        () => new FailingConstructionActor()),
                     ActorRefs.Nobody,
                     ActorRefs.Nobody));
 
@@ -119,7 +118,7 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
         {
             system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    _ => Props.Create(() => new FailingActor()),
+                    Props.Create(() => new FailingActor()),
                     ActorRefs.Nobody,
                     ActorRefs.Nobody));
 
@@ -166,5 +165,12 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
 
         protected override void PreStart() =>
             Self.Tell(new object());
+    }
+
+    private sealed class FailingConstructionActor : ReceiveActor
+    {
+        public FailingConstructionActor() =>
+            throw new InvalidOperationException(
+                "Target discovery owner construction failed.");
     }
 }

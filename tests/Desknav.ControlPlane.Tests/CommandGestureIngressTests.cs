@@ -26,7 +26,7 @@ public sealed class CommandGestureIngressTests
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    RecordingActor.CreatePropsFactory(
+                    RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
@@ -117,7 +117,7 @@ public sealed class CommandGestureIngressTests
                 Props.Create(() => new RecordingActor(observed.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    _ => Props.Empty,
+                    Props.Empty,
                     recorder,
                     ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
@@ -200,7 +200,7 @@ public sealed class CommandGestureIngressTests
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    RecordingActor.CreatePropsFactory(
+                    RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
@@ -269,7 +269,7 @@ public sealed class CommandGestureIngressTests
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    RecordingActor.CreatePropsFactory(
+                    RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
@@ -336,7 +336,7 @@ public sealed class CommandGestureIngressTests
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    RecordingActor.CreatePropsFactory(
+                    RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
@@ -423,7 +423,7 @@ public sealed class CommandGestureIngressTests
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    RecordingActor.CreatePropsFactory(
+                    RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));

@@ -13,13 +13,13 @@ internal static class ActorTestHelpers
 
     public static async Task<IActorRef> ResolveTargetDiscoveryAsync(
         ActorSystem system,
-        IActorRef coordinator,
+        IActorRef parent,
         CancellationToken cancellationToken)
     {
-        await FlushAsync(coordinator, cancellationToken);
+        await FlushAsync(parent, cancellationToken);
         return await system
             .ActorSelection(
-                coordinator.Path.Child("target-discovery"))
+                parent.Path.Child("target-discovery"))
             .ResolveOne(
                 Timeout.InfiniteTimeSpan,
                 cancellationToken);
@@ -27,12 +27,12 @@ internal static class ActorTestHelpers
 
     public static async Task PoisonTargetDiscoveryAsync(
         ActorSystem system,
-        IActorRef coordinator,
+        IActorRef parent,
         CancellationToken cancellationToken)
     {
         var targetDiscovery = await ResolveTargetDiscoveryAsync(
             system,
-            coordinator,
+            parent,
             cancellationToken);
         targetDiscovery.Tell(PoisonPill.Instance);
     }
