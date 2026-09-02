@@ -136,7 +136,7 @@ public sealed class TargetDiscoveryActorTests
         harness.Actor.Tell(new CancelTargetDiscovery(firstRequestId));
         harness.Actor.Tell(new DiscoverTargets(secondRequestId));
         var (canceled, second) =
-            await ReadCancellationAndStartAsync(harness.Discovery);
+            await harness.Discovery.ReadCancellationAndStartAsync();
 
         Assert.Same(first, canceled.Call);
         Assert.True(first.CancellationToken.IsCancellationRequested);
@@ -347,7 +347,7 @@ public sealed class TargetDiscoveryActorTests
         harness.Actor.Tell(new DiscoverTargets(secondRequestId));
 
         var (canceled, second) =
-            await ReadCancellationAndStartAsync(harness.Discovery);
+            await harness.Discovery.ReadCancellationAndStartAsync();
         Assert.Same(first, canceled.Call);
         Assert.True(first.CancellationToken.IsCancellationRequested);
 
@@ -700,12 +700,7 @@ public sealed class TargetDiscoveryActorTests
                 """);
 
         private readonly Channel<object> _coordinatorMessages =
-            Channel.CreateBounded<object>(
-                new BoundedChannelOptions(4)
-                {
-                    SingleReader = true,
-                    SingleWriter = true,
-                });
+            RecordingActor.CreateChannel(4);
         private readonly CancellationTokenSource _timeout;
         private readonly IActorRef _coordinator;
 
@@ -754,9 +749,7 @@ public sealed class TargetDiscoveryActorTests
                 await _coordinatorMessages.Reader.ReadAsync(TimeoutToken));
 
         public async Task FlushActorAsync() =>
-            await Actor.Ask<ActorIdentity>(
-                new Identify(null),
-                TimeoutToken);
+            await ActorTestHelpers.FlushAsync(Actor, TimeoutToken);
 
         public async Task AssertNoMoreCoordinatorMessagesAsync()
         {
@@ -789,169 +782,6 @@ public sealed class TargetDiscoveryActorTests
         }
     }
 
-    private sealed class ControllableTargetDiscovery : ITargetDiscovery
-    {
-        private readonly Channel<DiscoveryEvent> _events =
-            Channel.CreateBounded<DiscoveryEvent>(
-                new BoundedChannelOptions(4)
-                {
-                    SingleReader = true,
-                    SingleWriter = false,
-                });
-        private readonly CancellationToken _timeout;
-        private readonly bool _throwOnCancellation;
-        private readonly bool _blockSynchronousPrefix;
-        private readonly bool _blockCancellationCallback;
-        private readonly TaskCompletionSource _prefixRelease = new();
-        private readonly TaskCompletionSource _callbackRelease = new();
-        private int _activeCalls;
-
-        public ControllableTargetDiscovery(
-            CancellationToken timeout,
-            bool throwOnCancellation,
-            bool blockSynchronousPrefix,
-            bool blockCancellationCallback)
-        {
-            _timeout = timeout;
-            _throwOnCancellation = throwOnCancellation;
-            _blockSynchronousPrefix = blockSynchronousPrefix;
-            _blockCancellationCallback = blockCancellationCallback;
-        }
-
-        public async Task<TargetDiscoveryResult> DiscoverAsync(
-            CancellationToken cancellationToken)
-        {
-            var activeCalls = Interlocked.Increment(ref _activeCalls);
-            if (activeCalls
-                > TargetDiscoveryActor.MaximumConcurrentOperations)
-            {
-                Interlocked.Decrement(ref _activeCalls);
-                throw new InvalidOperationException(
-                    "Too many concurrent discovery calls.");
-            }
-
-            DiscoveryCall? call = null;
-            try
-            {
-                if (_throwOnCancellation)
-                {
-                    cancellationToken.Register(
-                        () => throw new InvalidOperationException(
-                            "Cancellation callback failed."));
-                }
-                else if (_blockCancellationCallback)
-                {
-                    cancellationToken.Register(
-                        () => _callbackRelease.Task
-                            .GetAwaiter()
-                            .GetResult());
-                }
-
-                call = new DiscoveryCall(
-                    cancellationToken,
-                    _events.Writer);
-                if (!_events.Writer.TryWrite(new DiscoveryStarted(call)))
-                {
-                    throw new InvalidOperationException(
-                        "The discovery event recorder rejected a start.");
-                }
-
-                if (_blockSynchronousPrefix)
-                {
-                    _prefixRelease.Task.GetAwaiter().GetResult();
-                }
-
-                return await call.Completion;
-            }
-            finally
-            {
-                call?.MarkExecutionEnded();
-                Interlocked.Decrement(ref _activeCalls);
-            }
-        }
-
-        public Task EventsCompletion => _events.Reader.Completion;
-
-        public async Task<DiscoveryEvent> ReadEventAsync() =>
-            await _events.Reader.ReadAsync(_timeout);
-
-        public async Task<T> ReadEventAsync<T>() =>
-            Assert.IsType<T>(
-                await ReadEventAsync());
-
-        public async Task<DiscoveryCall> ReadStartedCallAsync() =>
-            (await ReadEventAsync<DiscoveryStarted>()).Call;
-
-        public void ReleaseSynchronousPrefix() =>
-            _prefixRelease.SetResult();
-
-        public void ReleaseCancellationCallback() =>
-            _callbackRelease.SetResult();
-
-        public void CompleteEvents() => _events.Writer.TryComplete();
-    }
-
-    private sealed class DiscoveryCall
-    {
-        private readonly TaskCompletionSource<TargetDiscoveryResult>
-            _completion = new();
-        private readonly TaskCompletionSource _executionEnded = new();
-        private readonly CancellationTokenRegistration _registration;
-
-        public DiscoveryCall(
-            CancellationToken cancellationToken,
-            ChannelWriter<DiscoveryEvent> events)
-        {
-            CancellationToken = cancellationToken;
-            _registration = cancellationToken.Register(
-                () =>
-                {
-                    if (!events.TryWrite(
-                            new DiscoveryCanceled(this)))
-                    {
-                        throw new InvalidOperationException(
-                            "The discovery event recorder rejected"
-                            + " cancellation.");
-                    }
-                });
-        }
-
-        public CancellationToken CancellationToken { get; }
-
-        public Task<TargetDiscoveryResult> Completion => _completion.Task;
-
-        public Task ExecutionEnded => _executionEnded.Task;
-
-        public void Complete()
-        {
-            _completion.SetResult(TargetDiscoveryResult.Succeeded);
-            _registration.Dispose();
-        }
-
-        public void FailExpected()
-        {
-            _completion.SetResult(TargetDiscoveryResult.Failed);
-            _registration.Dispose();
-        }
-
-        public void Fail(Exception exception)
-        {
-            _completion.SetException(exception);
-            _registration.Dispose();
-        }
-
-        public void MarkExecutionEnded() =>
-            _executionEnded.SetResult();
-    }
-
-    private abstract record DiscoveryEvent;
-
-    private sealed record DiscoveryStarted(DiscoveryCall Call)
-        : DiscoveryEvent;
-
-    private sealed record DiscoveryCanceled(DiscoveryCall Call)
-        : DiscoveryEvent;
-
     private sealed class RecordingCancelable : ICancelable, IDisposable
     {
         public bool IsCancellationRequested { get; private set; }
@@ -980,23 +810,6 @@ public sealed class TargetDiscoveryActorTests
         }
 
         public void Dispose() => IsDisposed = true;
-    }
-
-    private static async Task<(
-        DiscoveryCanceled Canceled,
-        DiscoveryCall Started)> ReadCancellationAndStartAsync(
-        ControllableTargetDiscovery discovery)
-    {
-        var events = new[]
-        {
-            await discovery.ReadEventAsync(),
-            await discovery.ReadEventAsync(),
-        };
-        var canceled = Assert.Single(
-            events.OfType<DiscoveryCanceled>());
-        var started = Assert.Single(
-            events.OfType<DiscoveryStarted>());
-        return (canceled, started.Call);
     }
 
     private static void AssertFailedRequestIds(

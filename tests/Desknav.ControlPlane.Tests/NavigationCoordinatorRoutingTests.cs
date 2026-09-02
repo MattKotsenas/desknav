@@ -1,5 +1,3 @@
-using System.Threading.Channels;
-
 using Akka.Actor;
 
 using Desknav.ControlPlane;
@@ -13,22 +11,20 @@ public sealed class NavigationCoordinatorRoutingTests
     {
         using var timeout =
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var targetDiscovery = CreateRecorderChannel();
-        var presentations = CreateRecorderChannel();
+        var targetDiscovery = RecordingActor.CreateChannel(2);
+        var presentations = RecordingActor.CreateChannel(2);
         var system = ActorSystem.Create(
             $"navigation-routing-{Guid.NewGuid():N}");
 
         try
         {
-            var targetDiscoveryActor = system.ActorOf(
-                Props.Create(
-                    () => new RecordingActor(targetDiscovery.Writer)));
             var overlayOwner = system.ActorOf(
                 Props.Create(
                     () => new RecordingActor(presentations.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    targetDiscoveryActor,
+                    RecordingActor.CreatePropsFactory(
+                        targetDiscovery.Writer),
                     ActorRefs.Nobody,
                     overlayOwner));
             var connectionId = KanataConnectionId.New();
@@ -113,7 +109,10 @@ public sealed class NavigationCoordinatorRoutingTests
             Assert.IsType<DiscoverTargets>(
                 await targetDiscovery.Reader.ReadAsync(timeout.Token));
 
-            targetDiscoveryActor.Tell(PoisonPill.Instance);
+            await ActorTestHelpers.PoisonTargetDiscoveryAsync(
+                system,
+                coordinator,
+                timeout.Token);
             overlayOwner.Tell(PoisonPill.Instance);
             await targetDiscovery.Reader.Completion.WaitAsync(timeout.Token);
             await presentations.Reader.Completion.WaitAsync(timeout.Token);
@@ -123,12 +122,4 @@ public sealed class NavigationCoordinatorRoutingTests
             await system.Terminate();
         }
     }
-
-    private static Channel<object> CreateRecorderChannel() =>
-        Channel.CreateBounded<object>(
-            new BoundedChannelOptions(2)
-            {
-                SingleReader = true,
-                SingleWriter = true,
-            });
 }

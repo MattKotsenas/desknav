@@ -11,11 +11,22 @@ public sealed class NavigationCoordinator : ReceiveActor
         NavigationWorkflowState.Initial;
 
     public NavigationCoordinator(
-        IActorRef targetDiscovery,
+        Func<IActorRef, Props> createTargetDiscoveryProps,
         IActorRef inputObserver,
         IActorRef overlayOwner)
     {
-        _targetDiscovery = targetDiscovery;
+        try
+        {
+            _targetDiscovery = Context.ActorOf(
+                createTargetDiscoveryProps(Self),
+                "target-discovery");
+        }
+        catch
+        {
+            Context.System.Terminate();
+            throw;
+        }
+
         _inputObserver = inputObserver;
         _overlayOwner = overlayOwner;
 
@@ -26,17 +37,25 @@ public sealed class NavigationCoordinator : ReceiveActor
         Receive<TargetDiscoveryFailed>(Handle);
     }
 
+    protected override SupervisorStrategy SupervisorStrategy() =>
+        new OneForOneStrategy(
+            _ =>
+            {
+                Context.System.Terminate();
+                return Directive.Stop;
+            });
+
     public static Props CreateProps(
-        IActorRef targetDiscovery,
+        Func<IActorRef, Props> createTargetDiscoveryProps,
         IActorRef inputObserver,
         IActorRef overlayOwner)
     {
-        ArgumentNullException.ThrowIfNull(targetDiscovery);
+        ArgumentNullException.ThrowIfNull(createTargetDiscoveryProps);
         ArgumentNullException.ThrowIfNull(inputObserver);
         ArgumentNullException.ThrowIfNull(overlayOwner);
         return Akka.Actor.Props.Create(
             () => new NavigationCoordinator(
-                targetDiscovery,
+                createTargetDiscoveryProps,
                 inputObserver,
                 overlayOwner));
     }

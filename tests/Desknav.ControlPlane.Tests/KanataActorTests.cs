@@ -1,5 +1,3 @@
-using System.Threading.Channels;
-
 using Akka.Actor;
 using Akka.Pattern;
 
@@ -13,12 +11,7 @@ public sealed class KanataActorTests
     public async Task RejectsStaleConnectionsAndNonIncreasingSequences()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var observed = Channel.CreateBounded<object>(
-            new BoundedChannelOptions(6)
-            {
-                SingleReader = true,
-                SingleWriter = true,
-            });
+        var observed = RecordingActor.CreateChannel(6);
         var system = ActorSystem.Create("kanata-actor-test");
 
         try
