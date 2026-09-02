@@ -9,7 +9,7 @@ namespace Desknav.ControlPlane.Tests;
 public sealed class NavigationCoordinatorRoutingTests
 {
     [Fact]
-    public async Task PresentationRevisionsAdvanceAcrossDiscoveryWorkflows()
+    public async Task RoutesPresentationRevisionsAndDiscoveryFailure()
     {
         using var timeout =
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -85,6 +85,34 @@ public sealed class NavigationCoordinatorRoutingTests
                 PresentationRevision.From(2),
                 nextPresentation.Revision);
 
+            coordinator.Tell(
+                new GestureObserved(
+                    connectionId,
+                    KanataFrameSequence.From(5),
+                    new GestureToken("command", "spc")));
+            coordinator.Tell(
+                new GestureObserved(
+                    connectionId,
+                    KanataFrameSequence.From(6),
+                    new GestureToken("pointer", "f")));
+            var failedDiscovery = Assert.IsType<DiscoverTargets>(
+                await targetDiscovery.Reader.ReadAsync(timeout.Token));
+            coordinator.Tell(
+                new TargetDiscoveryFailed(failedDiscovery.RequestId));
+
+            coordinator.Tell(
+                new GestureObserved(
+                    connectionId,
+                    KanataFrameSequence.From(7),
+                    new GestureToken("command", "spc")));
+            coordinator.Tell(
+                new GestureObserved(
+                    connectionId,
+                    KanataFrameSequence.From(8),
+                    new GestureToken("pointer", "f")));
+            Assert.IsType<DiscoverTargets>(
+                await targetDiscovery.Reader.ReadAsync(timeout.Token));
+
             targetDiscoveryActor.Tell(PoisonPill.Instance);
             overlayOwner.Tell(PoisonPill.Instance);
             await targetDiscovery.Reader.Completion.WaitAsync(timeout.Token);
@@ -103,24 +131,4 @@ public sealed class NavigationCoordinatorRoutingTests
                 SingleReader = true,
                 SingleWriter = true,
             });
-
-    private sealed class RecordingActor : ReceiveActor
-    {
-        private readonly ChannelWriter<object> _writer;
-
-        public RecordingActor(ChannelWriter<object> writer)
-        {
-            _writer = writer;
-            ReceiveAny(message =>
-            {
-                if (!_writer.TryWrite(message))
-                {
-                    throw new InvalidOperationException(
-                        "The routing recorder rejected a message.");
-                }
-            });
-        }
-
-        protected override void PostStop() => _writer.TryComplete();
-    }
 }

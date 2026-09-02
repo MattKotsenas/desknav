@@ -9,8 +9,9 @@ truth for system shape.
 Wire stock Kanata's `base`, `command`, and direct `pointer` layer observations
 plus recognized gesture tokens into one control-plane coordinator. The
 coordinator owns command-prefix progress and semantic lifetime. Route target
-discovery to its boundary owner. Target discovery follows the cancellation
-and supersession contract in [ARCHITECTURE.md](ARCHITECTURE.md).
+discovery to its boundary owner. Target discovery follows the supersession,
+expected-failure, and timeout-unavailability contracts in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 Done when `CAP f d f d f l` produces an ordered command-token stream without
 changing the `command` layer, and `CAP Space f` changes
@@ -25,10 +26,14 @@ completion. Obsolete results cannot advance the later workflow. A disconnect
 invalidates the observed keyboard layer and command progress. Command-prefix
 recovery exercises the
 [received-layer reset rule](ARCHITECTURE.md#target-selection-workflow). The
-Escape scenario withholds cancellation completion after observing dispatch,
-observes Kanata in passthrough, and then makes control-plane IPC unavailable.
-The next ordinary key still reaches Windows within the direct-passthrough
-acceptance bound.
+current and obsolete discovery-failure scenarios exercise the
+[current-outcome matching rule](ARCHITECTURE.md#target-selection-workflow). The
+target-discovery timeout scenario exercises the [UI Automation
+timeout-unavailability rule](ARCHITECTURE.md#ui-automation). The Escape
+scenario withholds cancellation completion after observing dispatch, observes
+Kanata in passthrough, and then makes control-plane IPC unavailable. The next
+ordinary key still reaches Windows within the direct-passthrough acceptance
+bound.
 Architecture tests prove workflow state is confined to coordinator policy,
 workflow requests to boundary owners originate with the coordinator, and
 sibling boundary owners cannot command one another. Each external adapter is

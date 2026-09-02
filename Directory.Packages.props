@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Akka" Version="1.5.70" />
+    <PackageVersion Include="Akka.TestKit" Version="1.5.70" />
     <PackageVersion Include="CliWrap" Version="3.10.4" />
     <PackageVersion Include="DotNet.ReproducibleBuilds" Version="2.0.5" />
     <PackageVersion Include="Vogen" Version="8.0.7" />
