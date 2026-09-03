@@ -63,13 +63,23 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
                 timeout.Token);
             Assert.False(presentations.Reader.TryRead(out _));
 
-            current.Complete();
+            var currentTargets = new[]
+            {
+                new DesktopTarget(
+                    TargetId.New(),
+                    new TargetBounds(-1200, 40, 640, 480)),
+                new DesktopTarget(
+                    TargetId.New(),
+                    new TargetBounds(100, 200, 800, 600)),
+            };
+            current.Complete(currentTargets);
 
             var presentation = Assert.IsType<PresentTargets>(
                 await presentations.Reader.ReadAsync(timeout.Token));
             Assert.Equal(
                 PresentationRevision.From(1),
                 presentation.Revision);
+            Assert.Equal(currentTargets, presentation.Snapshot.Targets);
 
             overlayOwner.Tell(PoisonPill.Instance);
             await presentations.Reader.Completion.WaitAsync(timeout.Token);

@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 using Vogen;
 
 namespace Desknav.ControlPlane;
@@ -27,12 +29,67 @@ public readonly partial struct PresentationRevision
             : Validation.Ok;
 }
 
+[ValueObject<Guid>(conversions: Conversions.None)]
+public readonly partial struct TargetId
+{
+    public static TargetId New() => From(Guid.NewGuid());
+
+    private static Validation Validate(Guid value) =>
+        value == Guid.Empty
+            ? Validation.Invalid("A target ID cannot be empty.")
+            : Validation.Ok;
+}
+
+public readonly record struct TargetBounds
+{
+    public TargetBounds(int left, int top, int width, int height)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+
+        Left = left;
+        Top = top;
+        Width = width;
+        Height = height;
+    }
+
+    public int Left { get; }
+
+    public int Top { get; }
+
+    public int Width { get; }
+
+    public int Height { get; }
+}
+
+public sealed record DesktopTarget
+{
+    public DesktopTarget(TargetId id, TargetBounds bounds)
+    {
+        if (bounds == default)
+        {
+            throw new ArgumentException(
+                "Target bounds must be initialized.",
+                nameof(bounds));
+        }
+
+        Id = id;
+        Bounds = bounds;
+    }
+
+    public TargetId Id { get; }
+
+    public TargetBounds Bounds { get; }
+}
+
 public sealed record DiscoverTargets(TargetDiscoveryRequestId RequestId);
 
 public sealed record CancelTargetDiscovery(
     TargetDiscoveryRequestId RequestId);
 
-public sealed record TargetSnapshot(TargetDiscoveryRequestId RequestId);
+public sealed record TargetSnapshot(
+    TargetDiscoveryRequestId RequestId,
+    ImmutableArray<DesktopTarget> Targets);
 
 public sealed record TargetDiscoveryCompleted(TargetSnapshot Snapshot);
 

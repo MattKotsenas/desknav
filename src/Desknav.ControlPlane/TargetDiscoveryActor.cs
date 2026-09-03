@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 using Akka.Actor;
 using Akka.Event;
 
@@ -174,16 +176,24 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
         if (!finished.WasCancellationRequested)
         {
-            if (finished.Result == TargetDiscoveryResult.Succeeded)
+            switch (finished.Result)
             {
-                _coordinator.Tell(
-                    new TargetDiscoveryCompleted(
-                        new TargetSnapshot(finished.RequestId)));
-            }
-            else
-            {
-                _coordinator.Tell(
-                    new TargetDiscoveryFailed(finished.RequestId));
+                case TargetDiscoveryResult.Succeeded succeeded:
+                    _coordinator.Tell(
+                        new TargetDiscoveryCompleted(
+                            new TargetSnapshot(
+                                finished.RequestId,
+                                succeeded.Targets)));
+                    break;
+                case TargetDiscoveryResult.Failed:
+                    _coordinator.Tell(
+                        new TargetDiscoveryFailed(finished.RequestId));
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(finished.Result),
+                        finished.Result,
+                        "Unknown target discovery result.");
             }
         }
 
@@ -408,7 +418,7 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
             return new DiscoveryFinished(
                 requestId,
                 WasCancellationRequested: true,
-                TargetDiscoveryResult.Failed);
+                new TargetDiscoveryResult.Failed());
         }
     }
 
@@ -547,12 +557,31 @@ internal interface ITargetDiscovery
 }
 
 /// <summary>
-/// Distinguishes a usable observation from an expected inability to enumerate
+/// Distinguishes observed targets from an expected inability to enumerate
 /// without turning either into an exception.
 /// </summary>
-internal enum TargetDiscoveryResult
+internal abstract record TargetDiscoveryResult
 {
-    Succeeded,
+    private TargetDiscoveryResult()
+    {
+    }
 
-    Failed,
+    internal sealed record Succeeded : TargetDiscoveryResult
+    {
+        public Succeeded(ImmutableArray<DesktopTarget> targets)
+        {
+            if (targets.IsDefault)
+            {
+                throw new ArgumentException(
+                    "Successful discovery targets must be initialized.",
+                    nameof(targets));
+            }
+
+            Targets = targets;
+        }
+
+        public ImmutableArray<DesktopTarget> Targets { get; }
+    }
+
+    internal sealed record Failed : TargetDiscoveryResult;
 }

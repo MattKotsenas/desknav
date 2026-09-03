@@ -122,7 +122,7 @@ public sealed class NavigationWorkflowTests
         var decision = NavigationWorkflow.Decide(
             state,
             new TargetDiscoveryCompleted(
-                new TargetSnapshot(FirstRequestId)));
+                new TargetSnapshot(FirstRequestId, [])));
 
         Assert.Equal(state, decision.State);
         Assert.Empty(decision.Effects);
@@ -172,7 +172,7 @@ public sealed class NavigationWorkflowTests
             LastPresentationRevision = PresentationRevision.From(4),
         };
         var completed = new TargetDiscoveryCompleted(
-            new TargetSnapshot(FirstRequestId));
+            new TargetSnapshot(FirstRequestId, []));
 
         var accepted = NavigationWorkflow.Decide(state, completed);
 
@@ -202,7 +202,7 @@ public sealed class NavigationWorkflowTests
         var state = ActiveState(FirstRequestId);
         Assert.Null(state.LastPresentationRevision);
         var completed = new TargetDiscoveryCompleted(
-            new TargetSnapshot(FirstRequestId));
+            new TargetSnapshot(FirstRequestId, []));
 
         var decision = NavigationWorkflow.Decide(state, completed);
 
@@ -222,7 +222,7 @@ public sealed class NavigationWorkflowTests
             CommandProgress = CommandProgress.PointerPrefix,
         };
         var completed = new TargetDiscoveryCompleted(
-            new TargetSnapshot(FirstRequestId));
+            new TargetSnapshot(FirstRequestId, []));
 
         var decision = NavigationWorkflow.Decide(state, completed);
 
