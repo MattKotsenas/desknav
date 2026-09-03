@@ -53,16 +53,19 @@ public sealed class NavigationCoordinatorRoutingTests
                 new TargetDiscoveryCompleted(
                     new TargetSnapshot(discovery.RequestId, [])));
 
-            var presentation = Assert.IsType<PresentTargets>(
+            var presentation = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
+            var visible = Assert.IsType<TargetPresentation.Visible>(
+                presentation.Presentation);
             Assert.Equal(
                 discovery.RequestId,
-                presentation.Snapshot.RequestId);
+                visible.Snapshot.RequestId);
             Assert.Equal(
                 PresentationRevision.From(1),
                 presentation.Revision);
 
-            coordinator.Tell(new TargetsPresented(presentation.Revision));
+            coordinator.Tell(
+                new TargetPresentationApplied(presentation.Revision));
             await ActorTestHelpers.FlushAsync(coordinator, timeout.Token);
             await ActorTestHelpers.FlushAsync(
                 unhandledObserver,
@@ -82,8 +85,10 @@ public sealed class NavigationCoordinatorRoutingTests
             var nextDiscovery = Assert.IsType<DiscoverTargets>(
                 await targetDiscovery.Reader.ReadAsync(timeout.Token));
             Assert.NotEqual(discovery.RequestId, nextDiscovery.RequestId);
-            var cleanup = Assert.IsType<HideTargets>(
+            var cleanup = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
+            Assert.IsType<TargetPresentation.Hidden>(
+                cleanup.Presentation);
             Assert.Equal(
                 PresentationRevision.From(2),
                 cleanup.Revision);
@@ -91,17 +96,20 @@ public sealed class NavigationCoordinatorRoutingTests
             coordinator.Tell(
                 new TargetDiscoveryCompleted(
                     new TargetSnapshot(nextDiscovery.RequestId, [])));
-            var nextPresentation = Assert.IsType<PresentTargets>(
+            var nextPresentation = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
+            var nextVisible = Assert.IsType<TargetPresentation.Visible>(
+                nextPresentation.Presentation);
             Assert.Equal(
                 nextDiscovery.RequestId,
-                nextPresentation.Snapshot.RequestId);
+                nextVisible.Snapshot.RequestId);
             Assert.Equal(
                 PresentationRevision.From(3),
                 nextPresentation.Revision);
-            coordinator.Tell(new TargetsHidden(cleanup.Revision));
             coordinator.Tell(
-                new TargetsPresented(nextPresentation.Revision));
+                new TargetPresentationApplied(cleanup.Revision));
+            coordinator.Tell(
+                new TargetPresentationApplied(nextPresentation.Revision));
             await ActorTestHelpers.FlushAsync(coordinator, timeout.Token);
             await ActorTestHelpers.FlushAsync(
                 unhandledObserver,
@@ -120,8 +128,10 @@ public sealed class NavigationCoordinatorRoutingTests
                     new GestureToken("pointer", "f")));
             var failedDiscovery = Assert.IsType<DiscoverTargets>(
                 await targetDiscovery.Reader.ReadAsync(timeout.Token));
-            var nextCleanup = Assert.IsType<HideTargets>(
+            var nextCleanup = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
+            Assert.IsType<TargetPresentation.Hidden>(
+                nextCleanup.Presentation);
             Assert.Equal(
                 PresentationRevision.From(4),
                 nextCleanup.Revision);

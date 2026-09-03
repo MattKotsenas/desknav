@@ -20,15 +20,6 @@ public readonly partial struct TargetDiscoveryRequestId
             : Validation.Ok;
 }
 
-[ValueObject<long>(conversions: Conversions.None)]
-public readonly partial struct PresentationRevision
-{
-    private static Validation Validate(long value) =>
-        value <= 0
-            ? Validation.Invalid("A presentation revision must be positive.")
-            : Validation.Ok;
-}
-
 [ValueObject<Guid>(conversions: Conversions.None)]
 public readonly partial struct TargetId
 {
@@ -95,13 +86,3 @@ public sealed record TargetDiscoveryCompleted(TargetSnapshot Snapshot);
 
 public sealed record TargetDiscoveryFailed(
     TargetDiscoveryRequestId RequestId);
-
-public sealed record PresentTargets(
-    PresentationRevision Revision,
-    TargetSnapshot Snapshot);
-
-public sealed record HideTargets(PresentationRevision Revision);
-
-public sealed record TargetsPresented(PresentationRevision Revision);
-
-public sealed record TargetsHidden(PresentationRevision Revision);
