@@ -26,6 +26,7 @@ public sealed class NavigationCoordinator : ReceiveActor
         Receive<GestureObserved>(Handle);
         Receive<TargetDiscoveryCompleted>(Handle);
         Receive<TargetDiscoveryFailed>(Handle);
+        Receive<TargetsPresented>(Handle);
     }
 
     protected override SupervisorStrategy SupervisorStrategy() =>
@@ -69,6 +70,9 @@ public sealed class NavigationCoordinator : ReceiveActor
 
     private void Handle(TargetDiscoveryFailed failed)
         => Apply(NavigationWorkflow.Decide(_state, failed));
+
+    private void Handle(TargetsPresented presented)
+        => Apply(NavigationWorkflow.Decide(_state, presented));
 
     private void Apply(NavigationDecision decision)
     {

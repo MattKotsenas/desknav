@@ -1,4 +1,5 @@
 using Akka.Actor;
+using Akka.Event;
 
 using Desknav.ControlPlane;
 
@@ -13,6 +14,7 @@ public sealed class NavigationCoordinatorRoutingTests
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var targetDiscovery = RecordingActor.CreateChannel(2);
         var presentations = RecordingActor.CreateChannel(2);
+        var unhandledMessages = RecordingActor.CreateChannel(1);
         var system = ActorSystem.Create(
             $"navigation-routing-{Guid.NewGuid():N}");
 
@@ -21,6 +23,11 @@ public sealed class NavigationCoordinatorRoutingTests
             var overlayOwner = system.ActorOf(
                 Props.Create(
                     () => new RecordingActor(presentations.Writer)));
+            var unhandledObserver = system.ActorOf(
+                RecordingActor.CreateProps(unhandledMessages.Writer));
+            system.EventStream.Subscribe(
+                unhandledObserver,
+                typeof(UnhandledMessage));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
                     RecordingActor.CreateProps(
@@ -54,6 +61,13 @@ public sealed class NavigationCoordinatorRoutingTests
             Assert.Equal(
                 PresentationRevision.From(1),
                 presentation.Revision);
+
+            coordinator.Tell(new TargetsPresented(presentation.Revision));
+            await ActorTestHelpers.FlushAsync(coordinator, timeout.Token);
+            await ActorTestHelpers.FlushAsync(
+                unhandledObserver,
+                timeout.Token);
+            Assert.False(unhandledMessages.Reader.TryRead(out _));
 
             coordinator.Tell(
                 new GestureObserved(
@@ -114,8 +128,10 @@ public sealed class NavigationCoordinatorRoutingTests
                 coordinator,
                 timeout.Token);
             overlayOwner.Tell(PoisonPill.Instance);
+            unhandledObserver.Tell(PoisonPill.Instance);
             await targetDiscovery.Reader.Completion.WaitAsync(timeout.Token);
             await presentations.Reader.Completion.WaitAsync(timeout.Token);
+            await unhandledMessages.Reader.Completion.WaitAsync(timeout.Token);
         }
         finally
         {
