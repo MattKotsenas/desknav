@@ -100,4 +100,8 @@ public sealed record PresentTargets(
     PresentationRevision Revision,
     TargetSnapshot Snapshot);
 
+public sealed record HideTargets(PresentationRevision Revision);
+
 public sealed record TargetsPresented(PresentationRevision Revision);
+
+public sealed record TargetsHidden(PresentationRevision Revision);
