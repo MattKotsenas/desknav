@@ -133,25 +133,39 @@ internal static class NavigationWorkflow
             });
     }
 
+    public static NavigationDecision Decide(
+        NavigationWorkflowState state,
+        TargetsHidden hidden)
+    {
+        if (state.Presentation is not PresentationLifecycle.Clearing clearing
+            || clearing.Revision != hidden.Revision)
+        {
+            return Decision(state);
+        }
+
+        return Decision(
+            state with
+            {
+                Presentation = new PresentationLifecycle.Idle(
+                    clearing.Revision),
+            });
+    }
+
     private static NavigationDecision StartTargetDiscovery(
         NavigationWorkflowState state,
         TargetDiscoveryRequestId nextRequestId,
         NavigationEffect.ReportCommandInput reportInput)
     {
-        var (previousGeneration, previousRequestId) =
-            state.TargetDiscovery switch
-            {
-                TargetDiscoveryLifecycle.Active active =>
-                    (
-                        (WorkflowGeneration?)active.Generation,
-                        (TargetDiscoveryRequestId?)active.RequestId),
-                TargetDiscoveryLifecycle.Idle
-                    { LastGeneration: { } generation } =>
-                    ((WorkflowGeneration?)generation, null),
-                _ => (null, null),
-            };
-        var nextGeneration = previousGeneration is { } lastGeneration
-            ? WorkflowGeneration.From(lastGeneration.Value + 1)
+        var previousRequestId = state.TargetDiscovery
+            is TargetDiscoveryLifecycle.Active active
+                ? active.RequestId
+                : (TargetDiscoveryRequestId?)null;
+        var invalidated = InvalidatePresentation(state.Presentation);
+        var highWatermark = GenerationHighWatermark(
+            state.TargetDiscovery,
+            invalidated.Presentation);
+        var nextGeneration = highWatermark is { } previousGeneration
+            ? WorkflowGeneration.From(previousGeneration.Value + 1)
             : WorkflowGeneration.From(1);
         var nextState = state with
         {
@@ -159,7 +173,7 @@ internal static class NavigationWorkflow
             TargetDiscovery = new TargetDiscoveryLifecycle.Active(
                 nextGeneration,
                 nextRequestId),
-            Presentation = state.Presentation.Invalidate(),
+            Presentation = invalidated.Presentation,
         };
 
         if (previousRequestId is { } previous)
@@ -167,6 +181,7 @@ internal static class NavigationWorkflow
             return Decision(
                 nextState,
                 reportInput,
+                invalidated.Effects,
                 new NavigationEffect.CancelDiscovery(previous),
                 new NavigationEffect.RequestTargetDiscovery(nextRequestId));
         }
@@ -174,6 +189,7 @@ internal static class NavigationWorkflow
         return Decision(
             nextState,
             reportInput,
+            invalidated.Effects,
             new NavigationEffect.RequestTargetDiscovery(nextRequestId));
     }
 
@@ -186,21 +202,22 @@ internal static class NavigationWorkflow
             return Decision(state, report);
         }
 
+        var invalidated = InvalidatePresentation(state.Presentation);
         var ended = state with
         {
             CommandProgress = CommandProgress.Inactive,
-            Presentation = state.Presentation.Invalidate(),
+            TargetDiscovery = new TargetDiscoveryLifecycle.Idle(
+                GenerationHighWatermark(
+                    state.TargetDiscovery,
+                    invalidated.Presentation)),
+            Presentation = invalidated.Presentation,
         };
         if (state.TargetDiscovery is TargetDiscoveryLifecycle.Active active)
         {
-            ended = ended with
-            {
-                TargetDiscovery =
-                    new TargetDiscoveryLifecycle.Idle(active.Generation),
-            };
             return Decision(
                 ended,
                 report,
+                invalidated.Effects,
                 new NavigationEffect.CancelDiscovery(active.RequestId),
                 new NavigationEffect.ReportCommandSessionEnded());
         }
@@ -208,13 +225,71 @@ internal static class NavigationWorkflow
         return Decision(
             ended,
             report,
+            invalidated.Effects,
             new NavigationEffect.ReportCommandSessionEnded());
     }
+
+    private static PresentationInvalidation InvalidatePresentation(
+        PresentationLifecycle presentation)
+    {
+        if (presentation is PresentationLifecycle.Idle
+            or PresentationLifecycle.Clearing)
+        {
+            return new PresentationInvalidation(presentation, []);
+        }
+
+        var previousRevision = presentation switch
+        {
+            PresentationLifecycle.Pending pending => pending.Revision,
+            PresentationLifecycle.Current current => current.Revision,
+            _ => throw new InvalidOperationException(
+                "Unknown visible presentation lifecycle."),
+        };
+        var revision = PresentationRevision.From(
+            previousRevision.Value + 1);
+        return new PresentationInvalidation(
+            new PresentationLifecycle.Clearing(revision),
+            [new NavigationEffect.HideTargetPresentation(revision)]);
+    }
+
+    private static WorkflowGeneration? GenerationHighWatermark(
+        TargetDiscoveryLifecycle discovery,
+        PresentationLifecycle presentation)
+    {
+        var discoveryValue = discovery switch
+        {
+            TargetDiscoveryLifecycle.Active active =>
+                active.Generation.Value,
+            TargetDiscoveryLifecycle.Idle
+                { LastGeneration: { } generation } =>
+                generation.Value,
+            TargetDiscoveryLifecycle.Idle => 0,
+            _ => throw new InvalidOperationException(
+                "Unknown target discovery lifecycle."),
+        };
+        var lastValue = Math.Max(
+            discoveryValue,
+            presentation.LastRevision?.Value ?? 0);
+        return lastValue == 0
+            ? null
+            : WorkflowGeneration.From(lastValue);
+    }
+
+    private static NavigationDecision Decision(
+        NavigationWorkflowState state,
+        NavigationEffect first,
+        ImmutableArray<NavigationEffect> additional,
+        params NavigationEffect[] remaining) =>
+        new(state, [first, .. additional, .. remaining]);
 
     private static NavigationDecision Decision(
         NavigationWorkflowState state,
         params NavigationEffect[] effects) =>
         new(state, [.. effects]);
+
+    private sealed record PresentationInvalidation(
+        PresentationLifecycle Presentation,
+        ImmutableArray<NavigationEffect> Effects);
 }
 
 /// <summary>
@@ -265,11 +340,10 @@ internal abstract record PresentationLifecycle
             Idle idle => idle.LastAllocatedRevision,
             Pending pending => pending.Revision,
             Current current => current.Revision,
+            Clearing clearing => clearing.Revision,
             _ => throw new InvalidOperationException(
                 "Unknown presentation lifecycle."),
         };
-
-    internal Idle Invalidate() => new(LastRevision);
 
     /// <summary>
     /// Retains revision allocation without exposing a target map as current.
@@ -292,6 +366,13 @@ internal abstract record PresentationLifecycle
     internal sealed record Current(
         PresentationRevision Revision,
         TargetSnapshot Snapshot)
+        : PresentationLifecycle;
+
+    /// <summary>
+    /// Waits for the overlay to confirm that this revision is hidden.
+    /// </summary>
+    internal sealed record Clearing(
+        PresentationRevision Revision)
         : PresentationLifecycle;
 }
 
@@ -353,6 +434,13 @@ internal abstract record NavigationEffect
     internal sealed record PresentTargetSnapshot(
         PresentationRevision Revision,
         TargetSnapshot Snapshot)
+        : NavigationEffect;
+
+    /// <summary>
+    /// Carries the newer revision that must replace any visible scene.
+    /// </summary>
+    internal sealed record HideTargetPresentation(
+        PresentationRevision Revision)
         : NavigationEffect;
 }
 

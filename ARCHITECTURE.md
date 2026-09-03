@@ -141,6 +141,10 @@ generation but do not substitute for it.
 
 Desknav UI hosts presentation and one-shot-action boundaries. Its overlay
 owner atomically replaces older presentation with the current labeled scene.
+Visible scenes and hidden overlay state share one newer-wins presentation
+revision. The owner confirms the revision it makes active; completion of older
+render or cleanup work cannot replace newer desired state. Discovery
+generations advance past intervening presentation revisions.
 Its one-shot-action owner serializes explicitly requested point, UIA
 activation, or foreground coordinate-activation operations. Neither boundary
 captures the keyboard or owns the navigation workflow.

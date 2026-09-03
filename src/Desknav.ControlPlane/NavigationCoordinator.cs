@@ -27,6 +27,7 @@ public sealed class NavigationCoordinator : ReceiveActor
         Receive<TargetDiscoveryCompleted>(Handle);
         Receive<TargetDiscoveryFailed>(Handle);
         Receive<TargetsPresented>(Handle);
+        Receive<TargetsHidden>(Handle);
     }
 
     protected override SupervisorStrategy SupervisorStrategy() =>
@@ -74,6 +75,9 @@ public sealed class NavigationCoordinator : ReceiveActor
     private void Handle(TargetsPresented presented)
         => Apply(NavigationWorkflow.Decide(_state, presented));
 
+    private void Handle(TargetsHidden hidden)
+        => Apply(NavigationWorkflow.Decide(_state, hidden));
+
     private void Apply(NavigationDecision decision)
     {
         _state = decision.State;
@@ -107,6 +111,9 @@ public sealed class NavigationCoordinator : ReceiveActor
                         new PresentTargets(
                             present.Revision,
                             present.Snapshot));
+                    break;
+                case NavigationEffect.HideTargetPresentation hide:
+                    _overlayOwner.Tell(new HideTargets(hide.Revision));
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(

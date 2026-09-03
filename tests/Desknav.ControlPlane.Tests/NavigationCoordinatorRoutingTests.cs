@@ -13,7 +13,7 @@ public sealed class NavigationCoordinatorRoutingTests
         using var timeout =
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var targetDiscovery = RecordingActor.CreateChannel(2);
-        var presentations = RecordingActor.CreateChannel(2);
+        var presentations = RecordingActor.CreateChannel(4);
         var unhandledMessages = RecordingActor.CreateChannel(1);
         var system = ActorSystem.Create(
             $"navigation-routing-{Guid.NewGuid():N}");
@@ -82,6 +82,11 @@ public sealed class NavigationCoordinatorRoutingTests
             var nextDiscovery = Assert.IsType<DiscoverTargets>(
                 await targetDiscovery.Reader.ReadAsync(timeout.Token));
             Assert.NotEqual(discovery.RequestId, nextDiscovery.RequestId);
+            var cleanup = Assert.IsType<HideTargets>(
+                await presentations.Reader.ReadAsync(timeout.Token));
+            Assert.Equal(
+                PresentationRevision.From(2),
+                cleanup.Revision);
 
             coordinator.Tell(
                 new TargetDiscoveryCompleted(
@@ -92,8 +97,16 @@ public sealed class NavigationCoordinatorRoutingTests
                 nextDiscovery.RequestId,
                 nextPresentation.Snapshot.RequestId);
             Assert.Equal(
-                PresentationRevision.From(2),
+                PresentationRevision.From(3),
                 nextPresentation.Revision);
+            coordinator.Tell(new TargetsHidden(cleanup.Revision));
+            coordinator.Tell(
+                new TargetsPresented(nextPresentation.Revision));
+            await ActorTestHelpers.FlushAsync(coordinator, timeout.Token);
+            await ActorTestHelpers.FlushAsync(
+                unhandledObserver,
+                timeout.Token);
+            Assert.False(unhandledMessages.Reader.TryRead(out _));
 
             coordinator.Tell(
                 new GestureObserved(
@@ -107,6 +120,11 @@ public sealed class NavigationCoordinatorRoutingTests
                     new GestureToken("pointer", "f")));
             var failedDiscovery = Assert.IsType<DiscoverTargets>(
                 await targetDiscovery.Reader.ReadAsync(timeout.Token));
+            var nextCleanup = Assert.IsType<HideTargets>(
+                await presentations.Reader.ReadAsync(timeout.Token));
+            Assert.Equal(
+                PresentationRevision.From(4),
+                nextCleanup.Revision);
             coordinator.Tell(
                 new TargetDiscoveryFailed(failedDiscovery.RequestId));
 
@@ -122,6 +140,9 @@ public sealed class NavigationCoordinatorRoutingTests
                     new GestureToken("pointer", "f")));
             Assert.IsType<DiscoverTargets>(
                 await targetDiscovery.Reader.ReadAsync(timeout.Token));
+            await ActorTestHelpers.FlushAsync(coordinator, timeout.Token);
+            await ActorTestHelpers.FlushAsync(overlayOwner, timeout.Token);
+            Assert.False(presentations.Reader.TryRead(out _));
 
             await ActorTestHelpers.PoisonTargetDiscoveryAsync(
                 system,
