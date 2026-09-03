@@ -44,7 +44,7 @@ public sealed class NavigationCoordinatorRoutingTests
                 await targetDiscovery.Reader.ReadAsync(timeout.Token));
             coordinator.Tell(
                 new TargetDiscoveryCompleted(
-                    new TargetSnapshot(discovery.RequestId)));
+                    new TargetSnapshot(discovery.RequestId, [])));
 
             var presentation = Assert.IsType<PresentTargets>(
                 await presentations.Reader.ReadAsync(timeout.Token));
@@ -71,7 +71,7 @@ public sealed class NavigationCoordinatorRoutingTests
 
             coordinator.Tell(
                 new TargetDiscoveryCompleted(
-                    new TargetSnapshot(nextDiscovery.RequestId)));
+                    new TargetSnapshot(nextDiscovery.RequestId, [])));
             var nextPresentation = Assert.IsType<PresentTargets>(
                 await presentations.Reader.ReadAsync(timeout.Token));
             Assert.Equal(

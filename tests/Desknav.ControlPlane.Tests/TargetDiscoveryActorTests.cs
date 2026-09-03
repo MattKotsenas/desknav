@@ -14,6 +14,15 @@ public sealed class TargetDiscoveryActorTests
         TimeSpan.FromMinutes(1);
 
     [Fact]
+    public void SuccessfulResultRequiresInitializedTargets()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => new TargetDiscoveryResult.Succeeded(default));
+
+        Assert.Equal("targets", exception.ParamName);
+    }
+
+    [Fact]
     public async Task OperationDisposalWaitsForExecution()
     {
         using var cancellation = new CancellationTokenSource();
@@ -108,18 +117,28 @@ public sealed class TargetDiscoveryActorTests
     }
 
     [Fact]
-    public async Task CurrentDiscoveryReportsSnapshotWithRequestId()
+    public async Task CurrentDiscoveryReportsSnapshotWithRequestIdAndTargets()
     {
         await using var harness = await ActorHarness.CreateAsync();
         var requestId = TargetDiscoveryRequestId.New();
+        var targets = new[]
+        {
+            new DesktopTarget(
+                TargetId.New(),
+                new TargetBounds(-800, 100, 400, 300)),
+            new DesktopTarget(
+                TargetId.New(),
+                new TargetBounds(50, 75, 600, 450)),
+        };
 
         harness.Actor.Tell(new DiscoverTargets(requestId));
         var call = await harness.Discovery.ReadStartedCallAsync();
-        call.Complete();
+        call.Complete(targets);
 
         var completed =
             await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
         Assert.Equal(requestId, completed.Snapshot.RequestId);
+        Assert.Equal(targets, completed.Snapshot.Targets);
     }
 
     [Fact]
@@ -221,12 +240,12 @@ public sealed class TargetDiscoveryActorTests
             new TargetDiscoveryActor.DiscoveryFinished(
                 firstRequestId,
                 WasCancellationRequested: true,
-                TargetDiscoveryResult.Failed));
+                new TargetDiscoveryResult.Failed()));
         harness.Actor.Tell(
             new TargetDiscoveryActor.DiscoveryFinished(
                 secondRequestId,
                 WasCancellationRequested: true,
-                TargetDiscoveryResult.Failed));
+                new TargetDiscoveryResult.Failed()));
         harness.Actor.Tell(new DiscoverTargets(nextRequestId));
 
         var next = await harness.Discovery.ReadStartedCallAsync();
@@ -620,7 +639,7 @@ public sealed class TargetDiscoveryActorTests
             new TargetDiscoveryActor.DiscoveryFinished(
                 firstRequestId,
                 WasCancellationRequested: false,
-                TargetDiscoveryResult.Succeeded));
+                new TargetDiscoveryResult.Succeeded([])));
         harness.Actor.Tell(new DiscoverTargets(futureRequestId));
         var futureFailure =
             await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();

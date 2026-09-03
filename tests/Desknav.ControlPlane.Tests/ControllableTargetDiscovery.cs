@@ -151,15 +151,16 @@ internal sealed class DiscoveryCall
 
     public Task ExecutionEnded => _executionEnded.Task;
 
-    public void Complete()
+    public void Complete(params DesktopTarget[] targets)
     {
-        _completion.SetResult(TargetDiscoveryResult.Succeeded);
+        _completion.SetResult(
+            new TargetDiscoveryResult.Succeeded([.. targets]));
         _registration.Dispose();
     }
 
     public void FailExpected()
     {
-        _completion.SetResult(TargetDiscoveryResult.Failed);
+        _completion.SetResult(new TargetDiscoveryResult.Failed());
         _registration.Dispose();
     }
 
