@@ -10,22 +10,34 @@ public sealed class NavigationWorkflowTests
     private static readonly TargetDiscoveryRequestId SecondRequestId =
         TargetDiscoveryRequestId.Parse("00000000-0000-0000-0000-000000000002");
 
+    private static readonly TargetSnapshot FirstSnapshot =
+        new(
+            FirstRequestId,
+            [
+                new DesktopTarget(
+                    TargetId.Parse("00000000-0000-0000-0000-000000000003"),
+                    new TargetBounds(10, 20, 300, 400)),
+            ]);
+
     [Fact]
     public void CommandLayerResetsOnlyCommandProgress()
     {
         var active = new TargetDiscoveryLifecycle.Active(
-            WorkflowGeneration.From(1),
+            WorkflowGeneration.From(2),
             FirstRequestId);
+        var presentation = new PresentationLifecycle.Idle(
+            PresentationRevision.From(1));
         var state = new NavigationWorkflowState(
             CommandProgress.PointerPrefix,
             active,
-            LastPresentationRevision: null);
+            presentation);
         var observed = LayerObserved("command");
 
         var decision = NavigationWorkflow.Decide(state, observed);
 
         Assert.Equal(CommandProgress.Command, decision.State.CommandProgress);
         Assert.Equal(active, decision.State.TargetDiscovery);
+        Assert.Equal(presentation, decision.State.Presentation);
         Assert.Collection(
             decision.Effects,
             effect => Assert.Equal(
@@ -101,7 +113,11 @@ public sealed class NavigationWorkflowTests
     public void CommandSessionExitCancelsActiveDiscovery(
         CommandSessionExit exit)
     {
-        var state = ActiveState(FirstRequestId);
+        var state = ActiveState(FirstRequestId, generation: 3) with
+        {
+            Presentation = new PresentationLifecycle.Idle(
+                PresentationRevision.From(2)),
+        };
         Assert.Equal(CommandProgress.Command, state.CommandProgress);
         Assert.IsType<TargetDiscoveryLifecycle.Active>(state.TargetDiscovery);
 
@@ -109,9 +125,50 @@ public sealed class NavigationWorkflowTests
 
         Assert.Equal(CommandProgress.Inactive, decision.State.CommandProgress);
         Assert.Equal(
-            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(1)),
+            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(3)),
             decision.State.TargetDiscovery);
-        AssertExitEffects(decision.Effects, exit);
+        Assert.Equal(
+            new PresentationLifecycle.Idle(PresentationRevision.From(2)),
+            decision.State.Presentation);
+        AssertExitEffects(decision.Effects, exit, FirstRequestId);
+    }
+
+    [Theory]
+    [InlineData(CommandSessionExit.Escape, false)]
+    [InlineData(CommandSessionExit.Escape, true)]
+    [InlineData(CommandSessionExit.BaseLayer, false)]
+    [InlineData(CommandSessionExit.BaseLayer, true)]
+    [InlineData(CommandSessionExit.Disconnect, false)]
+    [InlineData(CommandSessionExit.Disconnect, true)]
+    public void CommandSessionExitInvalidatesPresentation(
+        CommandSessionExit exit,
+        bool confirmed)
+    {
+        var discovery = new TargetDiscoveryLifecycle.Idle(
+            WorkflowGeneration.From(2));
+        var revision = PresentationRevision.From(2);
+        PresentationLifecycle presentation = confirmed
+            ? new PresentationLifecycle.Current(revision, FirstSnapshot)
+            : new PresentationLifecycle.Pending(revision, FirstSnapshot);
+        var state = new NavigationWorkflowState(
+            CommandProgress.Command,
+            discovery,
+            presentation);
+
+        var decision = EndCommandSession(state, exit);
+
+        Assert.Equal(CommandProgress.Inactive, decision.State.CommandProgress);
+        Assert.Equal(discovery, decision.State.TargetDiscovery);
+        Assert.Equal(
+            new PresentationLifecycle.Idle(revision),
+            decision.State.Presentation);
+        AssertExitEffects(decision.Effects, exit, canceledRequestId: null);
+
+        var lateConfirmation = NavigationWorkflow.Decide(
+            decision.State,
+            new TargetsPresented(revision));
+        Assert.Equal(decision.State, lateConfirmation.State);
+        Assert.Empty(lateConfirmation.Effects);
     }
 
     [Fact]
@@ -131,9 +188,10 @@ public sealed class NavigationWorkflowTests
     [Fact]
     public void CurrentDiscoveryFailureEndsDiscovery()
     {
-        var state = ActiveState(FirstRequestId) with
+        var state = ActiveState(FirstRequestId, generation: 5) with
         {
-            LastPresentationRevision = PresentationRevision.From(4),
+            Presentation = new PresentationLifecycle.Idle(
+                PresentationRevision.From(4)),
         };
 
         var decision = NavigationWorkflow.Decide(
@@ -145,7 +203,7 @@ public sealed class NavigationWorkflowTests
             {
                 TargetDiscovery =
                     new TargetDiscoveryLifecycle.Idle(
-                        WorkflowGeneration.From(1)),
+                        WorkflowGeneration.From(5)),
             },
             decision.State);
         Assert.Empty(decision.Effects);
@@ -165,23 +223,25 @@ public sealed class NavigationWorkflowTests
     }
 
     [Fact]
-    public void CurrentResultAdvancesPresentationAndBecomesDuplicate()
+    public void CurrentResultAwaitsPresentationAndBecomesDuplicate()
     {
-        var state = ActiveState(FirstRequestId) with
+        var state = ActiveState(FirstRequestId, generation: 5) with
         {
-            LastPresentationRevision = PresentationRevision.From(4),
+            Presentation = new PresentationLifecycle.Idle(
+                PresentationRevision.From(4)),
         };
-        var completed = new TargetDiscoveryCompleted(
-            new TargetSnapshot(FirstRequestId, []));
+        var completed = new TargetDiscoveryCompleted(FirstSnapshot);
 
         var accepted = NavigationWorkflow.Decide(state, completed);
 
         Assert.Equal(
-            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(1)),
+            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(5)),
             accepted.State.TargetDiscovery);
         Assert.Equal(
-            PresentationRevision.From(5),
-            accepted.State.LastPresentationRevision);
+            new PresentationLifecycle.Pending(
+                PresentationRevision.From(5),
+                FirstSnapshot),
+            accepted.State.Presentation);
         var effect = Assert.IsType<NavigationEffect.PresentTargetSnapshot>(
             Assert.Single(accepted.Effects));
         Assert.Equal(
@@ -200,18 +260,90 @@ public sealed class NavigationWorkflowTests
     public void FirstCurrentResultUsesInitialPresentationRevision()
     {
         var state = ActiveState(FirstRequestId);
-        Assert.Null(state.LastPresentationRevision);
+        Assert.Equal(
+            new PresentationLifecycle.Idle(LastAllocatedRevision: null),
+            state.Presentation);
         var completed = new TargetDiscoveryCompleted(
             new TargetSnapshot(FirstRequestId, []));
 
         var decision = NavigationWorkflow.Decide(state, completed);
 
         Assert.Equal(
-            PresentationRevision.From(1),
-            decision.State.LastPresentationRevision);
+            new PresentationLifecycle.Pending(
+                PresentationRevision.From(1),
+                completed.Snapshot),
+            decision.State.Presentation);
         var effect = Assert.IsType<NavigationEffect.PresentTargetSnapshot>(
             Assert.Single(decision.Effects));
         Assert.Equal(PresentationRevision.From(1), effect.Revision);
+    }
+
+    [Fact]
+    public void OnlyMatchingPresentationConfirmationMakesTargetMapCurrent()
+    {
+        var revision = PresentationRevision.From(2);
+        var pending = new PresentationLifecycle.Pending(
+            revision,
+            FirstSnapshot);
+        var state = new NavigationWorkflowState(
+            CommandProgress.Command,
+            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(2)),
+            pending);
+
+        var stale = NavigationWorkflow.Decide(
+            state,
+            new TargetsPresented(PresentationRevision.From(1)));
+
+        Assert.Equal(state, stale.State);
+        Assert.Empty(stale.Effects);
+
+        var confirmed = NavigationWorkflow.Decide(
+            stale.State,
+            new TargetsPresented(revision));
+
+        Assert.Equal(
+            new PresentationLifecycle.Current(revision, FirstSnapshot),
+            confirmed.State.Presentation);
+        Assert.Empty(confirmed.Effects);
+
+        var duplicate = NavigationWorkflow.Decide(
+            confirmed.State,
+            new TargetsPresented(revision));
+
+        Assert.Equal(confirmed.State, duplicate.State);
+        Assert.Empty(duplicate.Effects);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StartingTargetDiscoveryInvalidatesPresentation(bool confirmed)
+    {
+        var revision = PresentationRevision.From(2);
+        PresentationLifecycle presentation = confirmed
+            ? new PresentationLifecycle.Current(revision, FirstSnapshot)
+            : new PresentationLifecycle.Pending(revision, FirstSnapshot);
+        var state = new NavigationWorkflowState(
+            CommandProgress.PointerPrefix,
+            new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(2)),
+            presentation);
+
+        var decision = NavigationWorkflow.Decide(
+            state,
+            Gesture("pointer", "f"),
+            () => SecondRequestId);
+
+        Assert.Equal(
+            new PresentationLifecycle.Idle(revision),
+            decision.State.Presentation);
+        Assert.IsType<TargetDiscoveryLifecycle.Active>(
+            decision.State.TargetDiscovery);
+
+        var lateConfirmation = NavigationWorkflow.Decide(
+            decision.State,
+            new TargetsPresented(revision));
+        Assert.Equal(decision.State, lateConfirmation.State);
+        Assert.Empty(lateConfirmation.Effects);
     }
 
     [Fact]
@@ -231,6 +363,11 @@ public sealed class NavigationWorkflowTests
             decision.State.CommandProgress);
         Assert.IsType<TargetDiscoveryLifecycle.Idle>(
             decision.State.TargetDiscovery);
+        Assert.Equal(
+            new PresentationLifecycle.Pending(
+                PresentationRevision.From(1),
+                completed.Snapshot),
+            decision.State.Presentation);
         Assert.IsType<NavigationEffect.PresentTargetSnapshot>(
             Assert.Single(decision.Effects));
     }
@@ -268,7 +405,7 @@ public sealed class NavigationWorkflowTests
         var state = new NavigationWorkflowState(
             CommandProgress.PointerPrefix,
             new TargetDiscoveryLifecycle.Idle(WorkflowGeneration.From(1)),
-            LastPresentationRevision: null);
+            new PresentationLifecycle.Idle(LastAllocatedRevision: null));
         var observed = Gesture("pointer", "f");
 
         var decision = NavigationWorkflow.Decide(
@@ -287,7 +424,7 @@ public sealed class NavigationWorkflowTests
         var state = new NavigationWorkflowState(
             CommandProgress.PointerPrefix,
             new TargetDiscoveryLifecycle.Idle(LastGeneration: null),
-            LastPresentationRevision: null);
+            new PresentationLifecycle.Idle(LastAllocatedRevision: null));
         var observed = Gesture("pointer", "f");
 
         var decision = NavigationWorkflow.Decide(
@@ -301,13 +438,14 @@ public sealed class NavigationWorkflowTests
     }
 
     private static NavigationWorkflowState ActiveState(
-        TargetDiscoveryRequestId requestId) =>
+        TargetDiscoveryRequestId requestId,
+        long generation = 1) =>
         new(
             CommandProgress.Command,
             new TargetDiscoveryLifecycle.Active(
-                WorkflowGeneration.From(1),
+                WorkflowGeneration.From(generation),
                 requestId),
-            LastPresentationRevision: null);
+            new PresentationLifecycle.Idle(LastAllocatedRevision: null));
 
     private static NavigationDecision EndCommandSession(
         NavigationWorkflowState state,
@@ -343,9 +481,10 @@ public sealed class NavigationWorkflowTests
 
     private static void AssertExitEffects(
         IReadOnlyList<NavigationEffect> effects,
-        CommandSessionExit exit)
+        CommandSessionExit exit,
+        TargetDiscoveryRequestId? canceledRequestId)
     {
-        Assert.Equal(3, effects.Count);
+        Assert.Equal(canceledRequestId is null ? 2 : 3, effects.Count);
         switch (exit)
         {
             case CommandSessionExit.Escape:
@@ -371,11 +510,15 @@ public sealed class NavigationWorkflowTests
                     null);
         }
 
-        Assert.Equal(
-            FirstRequestId,
-            Assert.IsType<NavigationEffect.CancelDiscovery>(
-                effects[1]).RequestId);
-        Assert.IsType<NavigationEffect.ReportCommandSessionEnded>(effects[2]);
+        if (canceledRequestId is { } requestId)
+        {
+            Assert.Equal(
+                requestId,
+                Assert.IsType<NavigationEffect.CancelDiscovery>(
+                    effects[1]).RequestId);
+        }
+
+        Assert.IsType<NavigationEffect.ReportCommandSessionEnded>(effects[^1]);
     }
 
     public enum CommandSessionExit

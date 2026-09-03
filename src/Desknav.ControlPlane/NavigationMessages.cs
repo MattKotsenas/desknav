@@ -99,3 +99,5 @@ public sealed record TargetDiscoveryFailed(
 public sealed record PresentTargets(
     PresentationRevision Revision,
     TargetSnapshot Snapshot);
+
+public sealed record TargetsPresented(PresentationRevision Revision);

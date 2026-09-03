@@ -79,7 +79,7 @@ internal static class NavigationWorkflow
             return Decision(state);
         }
 
-        var nextRevision = state.LastPresentationRevision is { } previous
+        var nextRevision = state.Presentation.LastRevision is { } previous
             ? PresentationRevision.From(previous.Value + 1)
             : PresentationRevision.From(1);
         return Decision(
@@ -87,7 +87,9 @@ internal static class NavigationWorkflow
             {
                 TargetDiscovery =
                     new TargetDiscoveryLifecycle.Idle(active.Generation),
-                LastPresentationRevision = nextRevision,
+                Presentation = new PresentationLifecycle.Pending(
+                    nextRevision,
+                    completed.Snapshot),
             },
             new NavigationEffect.PresentTargetSnapshot(
                 nextRevision,
@@ -109,6 +111,25 @@ internal static class NavigationWorkflow
             {
                 TargetDiscovery =
                     new TargetDiscoveryLifecycle.Idle(active.Generation),
+            });
+    }
+
+    public static NavigationDecision Decide(
+        NavigationWorkflowState state,
+        TargetsPresented presented)
+    {
+        if (state.Presentation is not PresentationLifecycle.Pending pending
+            || pending.Revision != presented.Revision)
+        {
+            return Decision(state);
+        }
+
+        return Decision(
+            state with
+            {
+                Presentation = new PresentationLifecycle.Current(
+                    pending.Revision,
+                    pending.Snapshot),
             });
     }
 
@@ -138,6 +159,7 @@ internal static class NavigationWorkflow
             TargetDiscovery = new TargetDiscoveryLifecycle.Active(
                 nextGeneration,
                 nextRequestId),
+            Presentation = state.Presentation.Invalidate(),
         };
 
         if (previousRequestId is { } previous)
@@ -167,6 +189,7 @@ internal static class NavigationWorkflow
         var ended = state with
         {
             CommandProgress = CommandProgress.Inactive,
+            Presentation = state.Presentation.Invalidate(),
         };
         if (state.TargetDiscovery is TargetDiscoveryLifecycle.Active active)
         {
@@ -200,13 +223,13 @@ internal static class NavigationWorkflow
 internal sealed record NavigationWorkflowState(
     CommandProgress CommandProgress,
     TargetDiscoveryLifecycle TargetDiscovery,
-    PresentationRevision? LastPresentationRevision)
+    PresentationLifecycle Presentation)
 {
     public static NavigationWorkflowState Initial { get; } =
         new(
             CommandProgress.Inactive,
             new TargetDiscoveryLifecycle.Idle(LastGeneration: null),
-            LastPresentationRevision: null);
+            new PresentationLifecycle.Idle(LastAllocatedRevision: null));
 }
 
 /// <summary>
@@ -229,6 +252,47 @@ internal abstract record TargetDiscoveryLifecycle
         WorkflowGeneration Generation,
         TargetDiscoveryRequestId RequestId)
         : TargetDiscoveryLifecycle;
+}
+
+/// <summary>
+/// Carries only the target map valid in each presentation phase.
+/// </summary>
+internal abstract record PresentationLifecycle
+{
+    internal PresentationRevision? LastRevision =>
+        this switch
+        {
+            Idle idle => idle.LastAllocatedRevision,
+            Pending pending => pending.Revision,
+            Current current => current.Revision,
+            _ => throw new InvalidOperationException(
+                "Unknown presentation lifecycle."),
+        };
+
+    internal Idle Invalidate() => new(LastRevision);
+
+    /// <summary>
+    /// Retains revision allocation without exposing a target map as current.
+    /// </summary>
+    internal sealed record Idle(
+        PresentationRevision? LastAllocatedRevision)
+        : PresentationLifecycle;
+
+    /// <summary>
+    /// Holds a target map until the overlay confirms its exact revision.
+    /// </summary>
+    internal sealed record Pending(
+        PresentationRevision Revision,
+        TargetSnapshot Snapshot)
+        : PresentationLifecycle;
+
+    /// <summary>
+    /// Identifies the target map confirmed as visible for this revision.
+    /// </summary>
+    internal sealed record Current(
+        PresentationRevision Revision,
+        TargetSnapshot Snapshot)
+        : PresentationLifecycle;
 }
 
 /// <summary>
