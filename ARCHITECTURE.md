@@ -37,7 +37,8 @@ context.
 
 One local control-plane coordinator owns the logical navigation workflow. The
 target-discovery, overlay, one-shot-action, keyboard-layer, and Komorebi
-boundaries each have one owner.
+boundaries each have one owner. The coordinator creates and supervises the
+target-discovery owner.
 
 When Kanata is in passthrough, control-plane and boundary work never delays
 ordinary keyboard input. Unfinished work may delay only a later operation

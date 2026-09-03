@@ -21,5 +21,16 @@ internal sealed class RecordingActor : ReceiveActor
         });
     }
 
+    public static Props CreateProps(ChannelWriter<object> writer) =>
+        Props.Create(() => new RecordingActor(writer));
+
+    public static Channel<object> CreateChannel(int capacity) =>
+        Channel.CreateBounded<object>(
+            new BoundedChannelOptions(capacity)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+            });
+
     protected override void PostStop() => _writer.TryComplete();
 }

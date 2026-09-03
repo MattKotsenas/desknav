@@ -24,12 +24,10 @@ public sealed class CommandGestureIngressTests
         {
             var inputObserver = system.ActorOf(
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
-            var targetDiscovery = system.ActorOf(
-                Props.Create(
-                    () => new RecordingActor(observedDiscoveries.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    targetDiscovery,
+                    RecordingActor.CreateProps(
+                        observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
@@ -82,7 +80,10 @@ public sealed class CommandGestureIngressTests
                 timeout.Token);
 
             inputObserver.Tell(PoisonPill.Instance);
-            targetDiscovery.Tell(PoisonPill.Instance);
+            await ActorTestHelpers.PoisonTargetDiscoveryAsync(
+                system,
+                coordinator,
+                timeout.Token);
             await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             await WaitForCompletionAsync(
                 observedDiscoveries.Reader,
@@ -116,7 +117,7 @@ public sealed class CommandGestureIngressTests
                 Props.Create(() => new RecordingActor(observed.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    ActorRefs.Nobody,
+                    Props.Empty,
                     recorder,
                     ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
@@ -197,12 +198,10 @@ public sealed class CommandGestureIngressTests
         {
             var inputObserver = system.ActorOf(
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
-            var targetDiscovery = system.ActorOf(
-                Props.Create(
-                    () => new RecordingActor(observedDiscoveries.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    targetDiscovery,
+                    RecordingActor.CreateProps(
+                        observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
@@ -236,7 +235,10 @@ public sealed class CommandGestureIngressTests
                 await observedInput.Reader.ReadAsync(timeout.Token));
 
             inputObserver.Tell(PoisonPill.Instance);
-            targetDiscovery.Tell(PoisonPill.Instance);
+            await ActorTestHelpers.PoisonTargetDiscoveryAsync(
+                system,
+                coordinator,
+                timeout.Token);
 
             await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             await WaitForCompletionAsync(
@@ -265,12 +267,10 @@ public sealed class CommandGestureIngressTests
         {
             var inputObserver = system.ActorOf(
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
-            var targetDiscovery = system.ActorOf(
-                Props.Create(
-                    () => new RecordingActor(observedDiscoveries.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    targetDiscovery,
+                    RecordingActor.CreateProps(
+                        observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
@@ -302,7 +302,10 @@ public sealed class CommandGestureIngressTests
                 await observedInput.Reader.ReadAsync(timeout.Token));
 
             inputObserver.Tell(PoisonPill.Instance);
-            targetDiscovery.Tell(PoisonPill.Instance);
+            await ActorTestHelpers.PoisonTargetDiscoveryAsync(
+                system,
+                coordinator,
+                timeout.Token);
             await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             await WaitForCompletionAsync(
                 observedDiscoveries.Reader,
@@ -331,12 +334,10 @@ public sealed class CommandGestureIngressTests
         {
             var inputObserver = system.ActorOf(
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
-            var targetDiscovery = system.ActorOf(
-                Props.Create(
-                    () => new RecordingActor(observedDiscoveries.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    targetDiscovery,
+                    RecordingActor.CreateProps(
+                        observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
@@ -386,7 +387,10 @@ public sealed class CommandGestureIngressTests
                 timeout.Token);
 
             inputObserver.Tell(PoisonPill.Instance);
-            targetDiscovery.Tell(PoisonPill.Instance);
+            await ActorTestHelpers.PoisonTargetDiscoveryAsync(
+                system,
+                coordinator,
+                timeout.Token);
             await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             await WaitForCompletionAsync(
                 observedDiscoveries.Reader,
@@ -417,12 +421,10 @@ public sealed class CommandGestureIngressTests
         {
             var inputObserver = system.ActorOf(
                 Props.Create(() => new RecordingActor(observedInput.Writer)));
-            var targetDiscovery = system.ActorOf(
-                Props.Create(
-                    () => new RecordingActor(observedDiscoveries.Writer)));
             var coordinator = system.ActorOf(
                 NavigationCoordinator.CreateProps(
-                    targetDiscovery,
+                    RecordingActor.CreateProps(
+                        observedDiscoveries.Writer),
                     inputObserver,
                     ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
@@ -457,7 +459,10 @@ public sealed class CommandGestureIngressTests
                 timeout.Token);
 
             inputObserver.Tell(PoisonPill.Instance);
-            targetDiscovery.Tell(PoisonPill.Instance);
+            await ActorTestHelpers.PoisonTargetDiscoveryAsync(
+                system,
+                coordinator,
+                timeout.Token);
             await WaitForCompletionAsync(observedInput.Reader, timeout.Token);
             await WaitForCompletionAsync(
                 observedDiscoveries.Reader,
@@ -538,12 +543,7 @@ public sealed class CommandGestureIngressTests
     }
 
     private static Channel<object> CreateRecorderChannel(int expectedMessages) =>
-        Channel.CreateBounded<object>(
-            new BoundedChannelOptions(expectedMessages + 1)
-            {
-                SingleReader = true,
-                SingleWriter = true,
-            });
+        RecordingActor.CreateChannel(expectedMessages + 1);
 
     private static async Task WaitForCompletionAsync(
         ChannelReader<object> reader,
