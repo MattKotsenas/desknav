@@ -77,7 +77,9 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         if (_isUnavailable)
         {
             _coordinator.Tell(
-                new TargetDiscoveryFailed(discover.RequestId));
+                new TargetDiscoveryCompleted(
+                    discover.RequestId,
+                    new TargetDiscoveryResult.Failed()));
             return;
         }
 
@@ -98,7 +100,9 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
             if (_pendingRequestId is { } supersededRequestId)
             {
                 _coordinator.Tell(
-                    new TargetDiscoveryFailed(supersededRequestId));
+                    new TargetDiscoveryCompleted(
+                        supersededRequestId,
+                        new TargetDiscoveryResult.Failed()));
             }
 
             _pendingRequestId = discover.RequestId;
@@ -176,25 +180,10 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
         if (!finished.WasCancellationRequested)
         {
-            switch (finished.Result)
-            {
-                case TargetDiscoveryResult.Succeeded succeeded:
-                    _coordinator.Tell(
-                        new TargetDiscoveryCompleted(
-                            new TargetSnapshot(
-                                finished.RequestId,
-                                succeeded.Targets)));
-                    break;
-                case TargetDiscoveryResult.Failed:
-                    _coordinator.Tell(
-                        new TargetDiscoveryFailed(finished.RequestId));
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(
-                        nameof(finished.Result),
-                        finished.Result,
-                        "Unknown target discovery result.");
-            }
+            _coordinator.Tell(
+                new TargetDiscoveryCompleted(
+                    finished.RequestId,
+                    finished.Result));
         }
 
         StartPendingDiscovery();
@@ -291,13 +280,18 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
                     cancellation,
                     Self);
             }
-            _coordinator.Tell(new TargetDiscoveryFailed(requestId));
+            _coordinator.Tell(
+                new TargetDiscoveryCompleted(
+                    requestId,
+                    new TargetDiscoveryResult.Failed()));
         }
 
         if (_pendingRequestId is { } pendingRequestId)
         {
             _coordinator.Tell(
-                new TargetDiscoveryFailed(pendingRequestId));
+                new TargetDiscoveryCompleted(
+                    pendingRequestId,
+                    new TargetDiscoveryResult.Failed()));
             _pendingRequestId = null;
         }
     }
@@ -554,34 +548,4 @@ internal interface ITargetDiscovery
     /// </summary>
     Task<TargetDiscoveryResult> DiscoverAsync(
         CancellationToken cancellationToken);
-}
-
-/// <summary>
-/// Distinguishes observed targets from an expected inability to enumerate
-/// without turning either into an exception.
-/// </summary>
-internal abstract record TargetDiscoveryResult
-{
-    private TargetDiscoveryResult()
-    {
-    }
-
-    internal sealed record Succeeded : TargetDiscoveryResult
-    {
-        public Succeeded(ImmutableArray<DesktopTarget> targets)
-        {
-            if (targets.IsDefault)
-            {
-                throw new ArgumentException(
-                    "Successful discovery targets must be initialized.",
-                    nameof(targets));
-            }
-
-            Targets = targets;
-        }
-
-        public ImmutableArray<DesktopTarget> Targets { get; }
-    }
-
-    internal sealed record Failed : TargetDiscoveryResult;
 }

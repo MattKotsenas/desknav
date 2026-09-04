@@ -48,6 +48,15 @@ public sealed class ValueObjectTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void InitialPresentationRevisionPrecedesFirstAllocatedRevision()
+    {
+        Assert.Equal(0, PresentationRevision.Initial.Value);
+        Assert.Equal(
+            PresentationRevision.From(1),
+            PresentationRevision.Initial.Increment());
+    }
+
     [Theory]
     [InlineData(0, 1, "width")]
     [InlineData(-1, 1, "width")]

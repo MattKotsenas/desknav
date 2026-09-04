@@ -1,7 +1,5 @@
 using System.Collections.Immutable;
 
-using Vogen;
-
 namespace Desknav.ControlPlane;
 
 /// <summary>
@@ -74,38 +72,54 @@ internal static class NavigationWorkflow
         TargetDiscoveryCompleted completed)
     {
         if (state.TargetDiscovery is not TargetDiscoveryLifecycle.Active active
-            || active.RequestId != completed.Snapshot.RequestId)
+            || active.RequestId != completed.RequestId)
         {
             return Decision(state);
         }
 
-        var nextRevision = state.Presentation.LastRevision is { } previous
-            ? PresentationRevision.From(previous.Value + 1)
-            : PresentationRevision.From(1);
+        return completed.Result switch
+        {
+            TargetDiscoveryResult.Succeeded succeeded =>
+                CompleteTargetDiscovery(
+                    state,
+                    active,
+                    new TargetSnapshot(
+                        completed.RequestId,
+                        succeeded.Targets)),
+            TargetDiscoveryResult.Failed =>
+                FailTargetDiscovery(state, active),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(completed),
+                completed,
+                "Unknown target discovery result."),
+        };
+    }
+
+    private static NavigationDecision CompleteTargetDiscovery(
+        NavigationWorkflowState state,
+        TargetDiscoveryLifecycle.Active active,
+        TargetSnapshot snapshot)
+    {
+        var nextRevision = state.Presentation.Revision.Increment();
+        var presentation = new TargetPresentation.Visible(snapshot);
         return Decision(
             state with
             {
                 TargetDiscovery =
                     new TargetDiscoveryLifecycle.Idle(active.Generation),
-                Presentation = new PresentationLifecycle.Pending(
+                Presentation = new PresentationLifecycle.Applying(
                     nextRevision,
-                    completed.Snapshot),
+                    presentation),
             },
-            new NavigationEffect.PresentTargetSnapshot(
+            new NavigationEffect.ApplyTargetPresentation(
                 nextRevision,
-                completed.Snapshot));
+                presentation));
     }
 
-    public static NavigationDecision Decide(
+    private static NavigationDecision FailTargetDiscovery(
         NavigationWorkflowState state,
-        TargetDiscoveryFailed failed)
+        TargetDiscoveryLifecycle.Active active)
     {
-        if (state.TargetDiscovery is not TargetDiscoveryLifecycle.Active active
-            || active.RequestId != failed.RequestId)
-        {
-            return Decision(state);
-        }
-
         return Decision(
             state with
             {
@@ -116,10 +130,10 @@ internal static class NavigationWorkflow
 
     public static NavigationDecision Decide(
         NavigationWorkflowState state,
-        TargetsPresented presented)
+        TargetPresentationApplied applied)
     {
-        if (state.Presentation is not PresentationLifecycle.Pending pending
-            || pending.Revision != presented.Revision)
+        if (state.Presentation is not PresentationLifecycle.Applying applying
+            || applying.Revision != applied.Revision)
         {
             return Decision(state);
         }
@@ -127,27 +141,9 @@ internal static class NavigationWorkflow
         return Decision(
             state with
             {
-                Presentation = new PresentationLifecycle.Current(
-                    pending.Revision,
-                    pending.Snapshot),
-            });
-    }
-
-    public static NavigationDecision Decide(
-        NavigationWorkflowState state,
-        TargetsHidden hidden)
-    {
-        if (state.Presentation is not PresentationLifecycle.Clearing clearing
-            || clearing.Revision != hidden.Revision)
-        {
-            return Decision(state);
-        }
-
-        return Decision(
-            state with
-            {
-                Presentation = new PresentationLifecycle.Idle(
-                    clearing.Revision),
+                Presentation = new PresentationLifecycle.Stable(
+                    applying.Revision,
+                    applying.Presentation),
             });
     }
 
@@ -232,24 +228,22 @@ internal static class NavigationWorkflow
     private static PresentationInvalidation InvalidatePresentation(
         PresentationLifecycle presentation)
     {
-        if (presentation is PresentationLifecycle.Idle
-            or PresentationLifecycle.Clearing)
+        if (presentation.Presentation is TargetPresentation.Hidden)
         {
             return new PresentationInvalidation(presentation, []);
         }
 
-        var previousRevision = presentation switch
+        if (presentation.Presentation is not TargetPresentation.Visible)
         {
-            PresentationLifecycle.Pending pending => pending.Revision,
-            PresentationLifecycle.Current current => current.Revision,
-            _ => throw new InvalidOperationException(
-                "Unknown visible presentation lifecycle."),
-        };
-        var revision = PresentationRevision.From(
-            previousRevision.Value + 1);
+            throw new InvalidOperationException(
+                "Unknown target presentation.");
+        }
+
+        var revision = presentation.Revision.Increment();
+        var hidden = new TargetPresentation.Hidden();
         return new PresentationInvalidation(
-            new PresentationLifecycle.Clearing(revision),
-            [new NavigationEffect.HideTargetPresentation(revision)]);
+            new PresentationLifecycle.Applying(revision, hidden),
+            [new NavigationEffect.ApplyTargetPresentation(revision, hidden)]);
     }
 
     private static WorkflowGeneration? GenerationHighWatermark(
@@ -269,7 +263,7 @@ internal static class NavigationWorkflow
         };
         var lastValue = Math.Max(
             discoveryValue,
-            presentation.LastRevision?.Value ?? 0);
+            presentation.Revision.Value);
         return lastValue == 0
             ? null
             : WorkflowGeneration.From(lastValue);
@@ -290,179 +284,4 @@ internal static class NavigationWorkflow
     private sealed record PresentationInvalidation(
         PresentationLifecycle Presentation,
         ImmutableArray<NavigationEffect> Effects);
-}
-
-/// <summary>
-/// Lets one decision compute a complete replacement for workflow state.
-/// </summary>
-internal sealed record NavigationWorkflowState(
-    CommandProgress CommandProgress,
-    TargetDiscoveryLifecycle TargetDiscovery,
-    PresentationLifecycle Presentation)
-{
-    public static NavigationWorkflowState Initial { get; } =
-        new(
-            CommandProgress.Inactive,
-            new TargetDiscoveryLifecycle.Idle(LastGeneration: null),
-            new PresentationLifecycle.Idle(LastAllocatedRevision: null));
-}
-
-/// <summary>
-/// Lets each discovery phase carry only the identities valid in that phase.
-/// </summary>
-internal abstract record TargetDiscoveryLifecycle
-{
-    /// <summary>
-    /// Retains the last generation after a request ends to prevent generation
-    /// reuse.
-    /// </summary>
-    internal sealed record Idle(
-        WorkflowGeneration? LastGeneration)
-        : TargetDiscoveryLifecycle;
-
-    /// <summary>
-    /// Supplies the request ID used to accept and cancel in-flight discovery.
-    /// </summary>
-    internal sealed record Active(
-        WorkflowGeneration Generation,
-        TargetDiscoveryRequestId RequestId)
-        : TargetDiscoveryLifecycle;
-}
-
-/// <summary>
-/// Carries only the target map valid in each presentation phase.
-/// </summary>
-internal abstract record PresentationLifecycle
-{
-    internal PresentationRevision? LastRevision =>
-        this switch
-        {
-            Idle idle => idle.LastAllocatedRevision,
-            Pending pending => pending.Revision,
-            Current current => current.Revision,
-            Clearing clearing => clearing.Revision,
-            _ => throw new InvalidOperationException(
-                "Unknown presentation lifecycle."),
-        };
-
-    /// <summary>
-    /// Retains revision allocation without exposing a target map as current.
-    /// </summary>
-    internal sealed record Idle(
-        PresentationRevision? LastAllocatedRevision)
-        : PresentationLifecycle;
-
-    /// <summary>
-    /// Holds a target map until the overlay confirms its exact revision.
-    /// </summary>
-    internal sealed record Pending(
-        PresentationRevision Revision,
-        TargetSnapshot Snapshot)
-        : PresentationLifecycle;
-
-    /// <summary>
-    /// Identifies the target map confirmed as visible for this revision.
-    /// </summary>
-    internal sealed record Current(
-        PresentationRevision Revision,
-        TargetSnapshot Snapshot)
-        : PresentationLifecycle;
-
-    /// <summary>
-    /// Waits for the overlay to confirm that this revision is hidden.
-    /// </summary>
-    internal sealed record Clearing(
-        PresentationRevision Revision)
-        : PresentationLifecycle;
-}
-
-/// <summary>
-/// Delays effect dispatch until the full state transition has been computed.
-/// </summary>
-internal sealed record NavigationDecision(
-    NavigationWorkflowState State,
-    ImmutableArray<NavigationEffect> Effects);
-
-/// <summary>
-/// Provides a typed vocabulary for work emitted by transition policy.
-/// </summary>
-internal abstract record NavigationEffect
-{
-    /// <summary>
-    /// Reports an observed layer even when it causes no workflow transition.
-    /// </summary>
-    internal sealed record ReportKeyboardLayer(
-        KeyboardLayerObserved Observation)
-        : NavigationEffect;
-
-    /// <summary>
-    /// Reports layer loss even when the command session is already inactive.
-    /// </summary>
-    internal sealed record ReportKeyboardLayerUnavailable(
-        KeyboardLayerUnavailable Observation)
-        : NavigationEffect;
-
-    /// <summary>
-    /// Reports every gesture token, including tokens that change no state.
-    /// </summary>
-    internal sealed record ReportCommandInput(GestureToken Token)
-        : NavigationEffect;
-
-    /// <summary>
-    /// Reports session end even when no discovery was active.
-    /// </summary>
-    internal sealed record ReportCommandSessionEnded
-        : NavigationEffect;
-
-    /// <summary>
-    /// Retires a discovery request the workflow no longer owns.
-    /// </summary>
-    internal sealed record CancelDiscovery(
-        TargetDiscoveryRequestId RequestId)
-        : NavigationEffect;
-
-    /// <summary>
-    /// Provides the request ID that discovery must echo in its snapshot.
-    /// </summary>
-    internal sealed record RequestTargetDiscovery(
-        TargetDiscoveryRequestId RequestId)
-        : NavigationEffect;
-
-    /// <summary>
-    /// Carries the revision the overlay must confirm before label activation.
-    /// </summary>
-    internal sealed record PresentTargetSnapshot(
-        PresentationRevision Revision,
-        TargetSnapshot Snapshot)
-        : NavigationEffect;
-
-    /// <summary>
-    /// Carries the newer revision that must replace any visible scene.
-    /// </summary>
-    internal sealed record HideTargetPresentation(
-        PresentationRevision Revision)
-        : NavigationEffect;
-}
-
-/// <summary>
-/// Records how much of a command gesture has been recognized.
-/// </summary>
-internal enum CommandProgress
-{
-    Inactive,
-    Command,
-    PointerPrefix,
-}
-
-/// <summary>
-/// Represents only allocated generations; an unallocated generation has no
-/// value.
-/// </summary>
-[ValueObject<long>(conversions: Conversions.None)]
-internal readonly partial struct WorkflowGeneration
-{
-    private static Validation Validate(long value) =>
-        value <= 0
-            ? Validation.Invalid("A workflow generation must be positive.")
-            : Validation.Ok;
 }

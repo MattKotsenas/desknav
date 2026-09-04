@@ -25,9 +25,7 @@ public sealed class NavigationCoordinator : ReceiveActor
         Receive<KeyboardLayerUnavailable>(Handle);
         Receive<GestureObserved>(Handle);
         Receive<TargetDiscoveryCompleted>(Handle);
-        Receive<TargetDiscoveryFailed>(Handle);
-        Receive<TargetsPresented>(Handle);
-        Receive<TargetsHidden>(Handle);
+        Receive<TargetPresentationApplied>(Handle);
     }
 
     protected override SupervisorStrategy SupervisorStrategy() =>
@@ -69,14 +67,8 @@ public sealed class NavigationCoordinator : ReceiveActor
     private void Handle(TargetDiscoveryCompleted completed)
         => Apply(NavigationWorkflow.Decide(_state, completed));
 
-    private void Handle(TargetDiscoveryFailed failed)
-        => Apply(NavigationWorkflow.Decide(_state, failed));
-
-    private void Handle(TargetsPresented presented)
-        => Apply(NavigationWorkflow.Decide(_state, presented));
-
-    private void Handle(TargetsHidden hidden)
-        => Apply(NavigationWorkflow.Decide(_state, hidden));
+    private void Handle(TargetPresentationApplied applied)
+        => Apply(NavigationWorkflow.Decide(_state, applied));
 
     private void Apply(NavigationDecision decision)
     {
@@ -106,14 +98,11 @@ public sealed class NavigationCoordinator : ReceiveActor
                     _targetDiscovery.Tell(
                         new DiscoverTargets(request.RequestId));
                     break;
-                case NavigationEffect.PresentTargetSnapshot present:
+                case NavigationEffect.ApplyTargetPresentation apply:
                     _overlayOwner.Tell(
-                        new PresentTargets(
-                            present.Revision,
-                            present.Snapshot));
-                    break;
-                case NavigationEffect.HideTargetPresentation hide:
-                    _overlayOwner.Tell(new HideTargets(hide.Revision));
+                        new ApplyTargetPresentation(
+                            apply.Revision,
+                            apply.Presentation));
                     break;
                 default:
                     throw new ArgumentOutOfRangeException(

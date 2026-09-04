@@ -20,15 +20,6 @@ public readonly partial struct TargetDiscoveryRequestId
             : Validation.Ok;
 }
 
-[ValueObject<long>(conversions: Conversions.None)]
-public readonly partial struct PresentationRevision
-{
-    private static Validation Validate(long value) =>
-        value <= 0
-            ? Validation.Invalid("A presentation revision must be positive.")
-            : Validation.Ok;
-}
-
 [ValueObject<Guid>(conversions: Conversions.None)]
 public readonly partial struct TargetId
 {
@@ -91,17 +82,40 @@ public sealed record TargetSnapshot(
     TargetDiscoveryRequestId RequestId,
     ImmutableArray<DesktopTarget> Targets);
 
-public sealed record TargetDiscoveryCompleted(TargetSnapshot Snapshot);
+/// <summary>
+/// Distinguishes observed targets from an expected inability to enumerate
+/// without turning either into an exception.
+/// </summary>
+public abstract record TargetDiscoveryResult
+{
+    private TargetDiscoveryResult()
+    {
+    }
 
-public sealed record TargetDiscoveryFailed(
-    TargetDiscoveryRequestId RequestId);
+    public sealed record Succeeded : TargetDiscoveryResult
+    {
+        public Succeeded(ImmutableArray<DesktopTarget> targets)
+        {
+            if (targets.IsDefault)
+            {
+                throw new ArgumentException(
+                    "Successful discovery targets must be initialized.",
+                    nameof(targets));
+            }
 
-public sealed record PresentTargets(
-    PresentationRevision Revision,
-    TargetSnapshot Snapshot);
+            Targets = targets;
+        }
 
-public sealed record HideTargets(PresentationRevision Revision);
+        public ImmutableArray<DesktopTarget> Targets { get; }
+    }
 
-public sealed record TargetsPresented(PresentationRevision Revision);
+    public sealed record Failed : TargetDiscoveryResult;
+}
 
-public sealed record TargetsHidden(PresentationRevision Revision);
+/// <summary>
+/// Reports the terminal result of a logical request. Intentionally canceled
+/// requests produce no completion.
+/// </summary>
+public sealed record TargetDiscoveryCompleted(
+    TargetDiscoveryRequestId RequestId,
+    TargetDiscoveryResult Result);

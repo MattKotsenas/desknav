@@ -117,7 +117,7 @@ public sealed class TargetDiscoveryActorTests
     }
 
     [Fact]
-    public async Task CurrentDiscoveryReportsSnapshotWithRequestIdAndTargets()
+    public async Task CurrentDiscoveryReportsRequestIdAndTargets()
     {
         await using var harness = await ActorHarness.CreateAsync();
         var requestId = TargetDiscoveryRequestId.New();
@@ -137,8 +137,9 @@ public sealed class TargetDiscoveryActorTests
 
         var completed =
             await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
-        Assert.Equal(requestId, completed.Snapshot.RequestId);
-        Assert.Equal(targets, completed.Snapshot.Targets);
+        var succeeded = AssertSucceeded(completed);
+        Assert.Equal(requestId, completed.RequestId);
+        Assert.Equal(targets, succeeded.Targets);
     }
 
     [Fact]
@@ -165,7 +166,8 @@ public sealed class TargetDiscoveryActorTests
 
         var completed =
             await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
-        Assert.Equal(secondRequestId, completed.Snapshot.RequestId);
+        AssertSucceeded(completed);
+        Assert.Equal(secondRequestId, completed.RequestId);
         await harness.AssertNoMoreCoordinatorMessagesAsync();
     }
 
@@ -198,13 +200,15 @@ public sealed class TargetDiscoveryActorTests
         newest.Complete();
 
         var superseded =
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
         var completed =
             await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
+        Assert.IsType<TargetDiscoveryResult.Failed>(superseded.Result);
+        AssertSucceeded(completed);
         Assert.Equal(
             supersededPendingRequestId,
             superseded.RequestId);
-        Assert.Equal(newestRequestId, completed.Snapshot.RequestId);
+        Assert.Equal(newestRequestId, completed.RequestId);
 
         second.Complete();
         await harness.AssertNoMoreCoordinatorMessagesAsync();
@@ -253,7 +257,8 @@ public sealed class TargetDiscoveryActorTests
         var completed =
             await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
 
-        Assert.Equal(nextRequestId, completed.Snapshot.RequestId);
+        AssertSucceeded(completed);
+        Assert.Equal(nextRequestId, completed.RequestId);
         await harness.AssertNoMoreDiscoveryEventsAsync();
     }
 
@@ -310,7 +315,8 @@ public sealed class TargetDiscoveryActorTests
         harness.Actor.Tell(new DiscoverTargets(pendingRequestId));
         // This response proves the pending request was handled before expiry.
         var superseded =
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
+        Assert.IsType<TargetDiscoveryResult.Failed>(superseded.Result);
         Assert.Equal(
             supersededPendingRequestId,
             superseded.RequestId);
@@ -319,9 +325,9 @@ public sealed class TargetDiscoveryActorTests
 
         var failures = new[]
         {
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
         };
         AssertFailedRequestIds(
             failures,
@@ -397,7 +403,8 @@ public sealed class TargetDiscoveryActorTests
 
         var completed =
             await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
-        Assert.Equal(secondRequestId, completed.Snapshot.RequestId);
+        AssertSucceeded(completed);
+        Assert.Equal(secondRequestId, completed.RequestId);
         await harness.AssertNoMoreCoordinatorMessagesAsync();
     }
 
@@ -426,7 +433,8 @@ public sealed class TargetDiscoveryActorTests
         call.FailExpected();
 
         var failed =
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
+        Assert.IsType<TargetDiscoveryResult.Failed>(failed.Result);
         Assert.Equal(requestId, failed.RequestId);
     }
 
@@ -444,7 +452,8 @@ public sealed class TargetDiscoveryActorTests
                 timedOutRequestId));
 
         var failed =
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
+        Assert.IsType<TargetDiscoveryResult.Failed>(failed.Result);
         var canceled =
             await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
         Assert.Equal(timedOutRequestId, failed.RequestId);
@@ -452,7 +461,8 @@ public sealed class TargetDiscoveryActorTests
 
         harness.Actor.Tell(new DiscoverTargets(nextRequestId));
         var nextFailed =
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
+        Assert.IsType<TargetDiscoveryResult.Failed>(nextFailed.Result);
         Assert.Equal(nextRequestId, nextFailed.RequestId);
 
         call.Complete();
@@ -479,8 +489,8 @@ public sealed class TargetDiscoveryActorTests
 
         var failures = new[]
         {
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
         };
         var canceled = new[]
         {
@@ -516,9 +526,9 @@ public sealed class TargetDiscoveryActorTests
 
         var failures = new[]
         {
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
         };
         var canceled = new[]
         {
@@ -564,7 +574,8 @@ public sealed class TargetDiscoveryActorTests
 
         var completed =
             await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
-        Assert.Equal(currentRequestId, completed.Snapshot.RequestId);
+        AssertSucceeded(completed);
+        Assert.Equal(currentRequestId, completed.RequestId);
 
         harness.Actor.Tell(new DiscoverTargets(nextRequestId));
         var next = await harness.Discovery.ReadStartedCallAsync();
@@ -594,7 +605,8 @@ public sealed class TargetDiscoveryActorTests
         var completed =
             await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
 
-        Assert.Equal(nextRequestId, completed.Snapshot.RequestId);
+        AssertSucceeded(completed);
+        Assert.Equal(nextRequestId, completed.RequestId);
         predecessor.Complete();
     }
 
@@ -624,9 +636,9 @@ public sealed class TargetDiscoveryActorTests
 
         var failures = new[]
         {
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>(),
         };
         AssertFailedRequestIds(
             failures,
@@ -642,7 +654,8 @@ public sealed class TargetDiscoveryActorTests
                 new TargetDiscoveryResult.Succeeded([])));
         harness.Actor.Tell(new DiscoverTargets(futureRequestId));
         var futureFailure =
-            await harness.ReadCoordinatorAsync<TargetDiscoveryFailed>();
+            await harness.ReadCoordinatorAsync<TargetDiscoveryCompleted>();
+        Assert.IsType<TargetDiscoveryResult.Failed>(futureFailure.Result);
         Assert.Equal(futureRequestId, futureFailure.RequestId);
 
         first.Complete();
@@ -890,10 +903,16 @@ public sealed class TargetDiscoveryActorTests
     }
 
     private static void AssertFailedRequestIds(
-        IEnumerable<TargetDiscoveryFailed> failures,
+        IEnumerable<TargetDiscoveryCompleted> failures,
         params TargetDiscoveryRequestId[] expected)
     {
-        var actual = failures
+        var results = failures.ToArray();
+        Assert.All(
+            results,
+            failure =>
+                Assert.IsType<TargetDiscoveryResult.Failed>(
+                    failure.Result));
+        var actual = results
             .Select(failure => failure.RequestId)
             .ToHashSet();
         if (actual.SetEquals(expected))
@@ -907,6 +926,10 @@ public sealed class TargetDiscoveryActorTests
             $"Failed request IDs - missing: {FormatRequestIds(missing)};"
             + $" unexpected: {FormatRequestIds(unexpected)}.");
     }
+
+    private static TargetDiscoveryResult.Succeeded AssertSucceeded(
+        TargetDiscoveryCompleted completed) =>
+        Assert.IsType<TargetDiscoveryResult.Succeeded>(completed.Result);
 
     private static string FormatRequestIds(
         IEnumerable<TargetDiscoveryRequestId> requestIds)

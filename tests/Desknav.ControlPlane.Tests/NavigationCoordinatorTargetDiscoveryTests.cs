@@ -74,12 +74,14 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
             };
             current.Complete(currentTargets);
 
-            var presentation = Assert.IsType<PresentTargets>(
+            var presentation = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
+            var visible = Assert.IsType<TargetPresentation.Visible>(
+                presentation.Presentation);
             Assert.Equal(
                 PresentationRevision.From(1),
                 presentation.Revision);
-            Assert.Equal(currentTargets, presentation.Snapshot.Targets);
+            Assert.Equal(currentTargets, visible.Snapshot.Targets);
 
             overlayOwner.Tell(PoisonPill.Instance);
             await presentations.Reader.Completion.WaitAsync(timeout.Token);
