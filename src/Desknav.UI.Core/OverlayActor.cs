@@ -32,8 +32,8 @@ public sealed class OverlayActor : ReceiveActor
         Receive<CancellationFailed>(Handle);
         Receive<ActivationFinished>(Handle);
         Receive<ActivationFaulted>(Handle);
-        Receive<SceneReleased>(Handle);
-        Receive<SceneReleaseFaulted>(Handle);
+        Receive<ReleaseCompleted>(Handle);
+        Receive<ReleaseFaulted>(Handle);
     }
 
     public static Props CreateProps(IOverlayRenderer renderer)
@@ -141,10 +141,9 @@ public sealed class OverlayActor : ReceiveActor
         TargetPresentation presentation)
     {
         var cancellation = new CancellationTokenSource();
-        var execution = Task.Run(
-            () => _renderer.PrepareAsync(
-                presentation,
-                cancellation.Token));
+        var execution = PrepareSceneAsync(
+            presentation,
+            cancellation.Token);
         var operation =
             new PreparationOperation(cancellation, execution);
         _preparations.Add(revision, operation);
@@ -232,8 +231,7 @@ public sealed class OverlayActor : ReceiveActor
         }
 
         _ready = null;
-        var execution = Task.Run(
-            () => _renderer.ActivateAsync(ready.Scene));
+        var execution = ActivateSceneAsync(ready.Scene);
         _activation = new ActivationOperation(
             ready.Revision,
             desired.ReplyTo,
@@ -302,32 +300,48 @@ public sealed class OverlayActor : ReceiveActor
             faulted.Revision);
     }
 
-    private static void ReleasePreparation(
-        PreparationOperation operation) =>
-        _ = operation.DisposeAsync();
+    private void ReleasePreparation(PreparationOperation operation) =>
+        TrackRelease(DisposeResourceAsync(operation));
 
-    private void ReleaseScene(IPreparedScene scene)
+    private void ReleaseScene(IPreparedScene scene) =>
+        TrackRelease(DisposeResourceAsync(scene));
+
+    private void TrackRelease(Task release)
     {
-        var release = Task.Run(
-            async () => await scene.DisposeAsync().ConfigureAwait(false));
         _releases.Add(release);
         release.PipeTo(
             Self,
             Self,
-            () => new SceneReleased(release),
-            exception => new SceneReleaseFaulted(release, exception));
+            () => new ReleaseCompleted(release),
+            exception => new ReleaseFaulted(release, exception));
     }
 
-    private void Handle(SceneReleased released) =>
-        _releases.Remove(released.ReleaseTask);
+    private void Handle(ReleaseCompleted completed) =>
+        _releases.Remove(completed.ReleaseTask);
 
-    private void Handle(SceneReleaseFaulted faulted)
+    private void Handle(ReleaseFaulted faulted)
     {
         _releases.Remove(faulted.ReleaseTask);
         StopApplication(
             faulted.Cause,
-            "Release of an overlay scene faulted unexpectedly.");
+            "Release of an overlay resource faulted unexpectedly.");
     }
+
+    // These wrappers preserve failures as task results for PipeTo, including
+    // exceptions thrown before an implementation returns a task.
+    private async Task<IPreparedScene> PrepareSceneAsync(
+        TargetPresentation presentation,
+        CancellationToken cancellationToken) =>
+        await _renderer
+            .PrepareAsync(presentation, cancellationToken)
+            .ConfigureAwait(false);
+
+    private async Task ActivateSceneAsync(IPreparedScene scene) =>
+        await _renderer.ActivateAsync(scene).ConfigureAwait(false);
+
+    private static async Task DisposeResourceAsync(
+        IAsyncDisposable resource) =>
+        await resource.DisposeAsync().ConfigureAwait(false);
 
     private void StopApplication(
         Exception cause,
@@ -468,7 +482,7 @@ public sealed class OverlayActor : ReceiveActor
         {
             _log.Error(
                 exception,
-                "Overlay scene release failed during shutdown.");
+                "Overlay resource release failed during shutdown.");
         }
     }
 
@@ -510,9 +524,9 @@ public sealed class OverlayActor : ReceiveActor
         PresentationRevision Revision,
         Exception Cause);
 
-    private sealed record SceneReleased(Task ReleaseTask);
+    private sealed record ReleaseCompleted(Task ReleaseTask);
 
-    private sealed record SceneReleaseFaulted(
+    private sealed record ReleaseFaulted(
         Task ReleaseTask,
         Exception Cause);
 

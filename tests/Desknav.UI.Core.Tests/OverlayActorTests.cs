@@ -274,6 +274,20 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
+    public async Task SynchronousPreparationFailureTerminatesActorSystem()
+    {
+        await using var harness = new ActorHarness();
+        harness.Renderer.FailPreparationSynchronously(
+            new InvalidOperationException("Preparation failed."));
+
+        harness.Apply(
+            PresentationRevision.From(1),
+            VisiblePresentation());
+
+        await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
+    }
+
+    [Fact]
     public async Task ActivationFailureTerminatesActorSystem()
     {
         await using var harness = new ActorHarness();
@@ -288,6 +302,23 @@ public sealed class OverlayActorTests
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
         activation.Fail(
             new InvalidOperationException("Activation failed."));
+
+        await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
+    }
+
+    [Fact]
+    public async Task SynchronousActivationFailureTerminatesActorSystem()
+    {
+        await using var harness = new ActorHarness();
+
+        harness.Apply(
+            PresentationRevision.From(1),
+            VisiblePresentation());
+        var preparation =
+            (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
+        harness.Renderer.FailActivationSynchronously(
+            new InvalidOperationException("Activation failed."));
+        preparation.Complete();
 
         await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
     }
@@ -340,7 +371,24 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task StoppingActorCancelsPreparationAndDisposesItsScene()
+    public async Task SynchronousSceneDisposalFailureTerminatesActorSystem()
+    {
+        await using var harness = new ActorHarness();
+        var first = await harness.ApplyCompletelyAsync(
+            PresentationRevision.From(1),
+            VisiblePresentation());
+        first.Scene.FailDisposalSynchronously(
+            new InvalidOperationException("Scene disposal failed."));
+
+        await harness.ApplyCompletelyAsync(
+            PresentationRevision.From(2),
+            VisiblePresentation());
+
+        await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
+    }
+
+    [Fact]
+    public async Task ShutdownCleanupCancelsPreparationAndDisposesItsScene()
     {
         await using var harness = new ActorHarness();
 
@@ -361,7 +409,7 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task StoppingActorWaitsForActivationBeforeDisposingItsScene()
+    public async Task ShutdownCleanupWaitsForActivationBeforeDisposingIncomingScene()
     {
         await using var harness = new ActorHarness();
 
@@ -387,7 +435,7 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task StoppingActorWaitsBeforeDisposingOutgoingScene()
+    public async Task ShutdownCleanupWaitsForActivationBeforeDisposingOutgoingScene()
     {
         await using var harness = new ActorHarness();
         var active = await harness.ApplyCompletelyAsync(
@@ -455,7 +503,7 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task StoppingActorDisposesActiveScene()
+    public async Task ShutdownCleanupDisposesActiveScene()
     {
         await using var harness = new ActorHarness();
         var active = await harness.ApplyCompletelyAsync(

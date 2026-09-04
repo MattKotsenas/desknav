@@ -18,6 +18,8 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
     private readonly ConcurrentQueue<PreparedScene> _activations = [];
     private readonly ConcurrentQueue<PreparationCall> _preparations = [];
     private int _activationInProgress;
+    private Exception? _synchronousActivationFailure;
+    private Exception? _synchronousPreparationFailure;
 
     public ControllableOverlayRenderer(CancellationToken timeout)
     {
@@ -32,7 +34,35 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
 
     public PreparedScene? CurrentScene { get; private set; }
 
-    public async Task<IPreparedScene> PrepareAsync(
+    public void FailActivationSynchronously(Exception exception) =>
+        Volatile.Write(ref _synchronousActivationFailure, exception);
+
+    public void FailPreparationSynchronously(Exception exception) =>
+        Volatile.Write(ref _synchronousPreparationFailure, exception);
+
+    public Task<IPreparedScene> PrepareAsync(
+        TargetPresentation presentation,
+        CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _synchronousPreparationFailure) is { } failure)
+        {
+            throw failure;
+        }
+
+        return PrepareCoreAsync(presentation, cancellationToken);
+    }
+
+    public Task ActivateAsync(IPreparedScene scene)
+    {
+        if (Volatile.Read(ref _synchronousActivationFailure) is { } failure)
+        {
+            throw failure;
+        }
+
+        return ActivateCoreAsync(scene);
+    }
+
+    private async Task<IPreparedScene> PrepareCoreAsync(
         TargetPresentation presentation,
         CancellationToken cancellationToken)
     {
@@ -55,7 +85,7 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
         }
     }
 
-    public async Task ActivateAsync(IPreparedScene scene)
+    private async Task ActivateCoreAsync(IPreparedScene scene)
     {
         var prepared = Assert.IsType<PreparedScene>(scene);
         if (Interlocked.Exchange(ref _activationInProgress, 1) != 0)
@@ -174,11 +204,15 @@ internal sealed class PreparedScene(ChannelWriter<OverlayEvent> events)
 {
     private int _isDisposed;
     private Exception? _disposalFailure;
+    private Exception? _synchronousDisposalFailure;
 
     public bool IsDisposed => Volatile.Read(ref _isDisposed) != 0;
 
     public void FailDisposal(Exception exception) =>
-        _disposalFailure = exception;
+        Volatile.Write(ref _disposalFailure, exception);
+
+    public void FailDisposalSynchronously(Exception exception) =>
+        Volatile.Write(ref _synchronousDisposalFailure, exception);
 
     public ValueTask DisposeAsync()
     {
@@ -188,15 +222,20 @@ internal sealed class PreparedScene(ChannelWriter<OverlayEvent> events)
                 "A prepared scene was disposed more than once.");
         }
 
+        if (Volatile.Read(ref _synchronousDisposalFailure) is { } failure)
+        {
+            throw failure;
+        }
+
         if (!events.TryWrite(new SceneDisposed(this)))
         {
             throw new InvalidOperationException(
                 "The overlay event recorder rejected scene disposal.");
         }
 
-        return _disposalFailure is null
+        return Volatile.Read(ref _disposalFailure) is not { } disposalFailure
             ? ValueTask.CompletedTask
-            : ValueTask.FromException(_disposalFailure);
+            : ValueTask.FromException(disposalFailure);
     }
 }
 
