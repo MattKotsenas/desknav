@@ -1,9 +1,13 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Desknav.ControlPlane/Desknav.ControlPlane.csproj" />
+    <Project Path="src/Desknav.UI.Core/Desknav.UI.Core.csproj" />
+    <Project Path="src/Desknav.UI.Wpf/Desknav.UI.Wpf.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Desknav.ControlPlane.Tests/Desknav.ControlPlane.Tests.csproj" />
     <Project Path="tests/Desknav.Kanata.Tests/Desknav.Kanata.Tests.csproj" />
+    <Project Path="tests/Desknav.UI.Core.Tests/Desknav.UI.Core.Tests.csproj" />
+    <Project Path="tests/Desknav.UI.Wpf.Tests/Desknav.UI.Wpf.Tests.csproj" />
   </Folder>
 </Solution>
