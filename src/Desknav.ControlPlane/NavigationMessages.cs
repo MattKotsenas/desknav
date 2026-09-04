@@ -82,7 +82,40 @@ public sealed record TargetSnapshot(
     TargetDiscoveryRequestId RequestId,
     ImmutableArray<DesktopTarget> Targets);
 
-public sealed record TargetDiscoveryCompleted(TargetSnapshot Snapshot);
+/// <summary>
+/// Distinguishes observed targets from an expected inability to enumerate
+/// without turning either into an exception.
+/// </summary>
+public abstract record TargetDiscoveryResult
+{
+    private TargetDiscoveryResult()
+    {
+    }
 
-public sealed record TargetDiscoveryFailed(
-    TargetDiscoveryRequestId RequestId);
+    public sealed record Succeeded : TargetDiscoveryResult
+    {
+        public Succeeded(ImmutableArray<DesktopTarget> targets)
+        {
+            if (targets.IsDefault)
+            {
+                throw new ArgumentException(
+                    "Successful discovery targets must be initialized.",
+                    nameof(targets));
+            }
+
+            Targets = targets;
+        }
+
+        public ImmutableArray<DesktopTarget> Targets { get; }
+    }
+
+    public sealed record Failed : TargetDiscoveryResult;
+}
+
+/// <summary>
+/// Reports the terminal result of a logical request. Intentionally canceled
+/// requests produce no completion.
+/// </summary>
+public sealed record TargetDiscoveryCompleted(
+    TargetDiscoveryRequestId RequestId,
+    TargetDiscoveryResult Result);

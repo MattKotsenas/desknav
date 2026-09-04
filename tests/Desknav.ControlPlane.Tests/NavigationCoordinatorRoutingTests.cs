@@ -51,7 +51,8 @@ public sealed class NavigationCoordinatorRoutingTests
                 await targetDiscovery.Reader.ReadAsync(timeout.Token));
             coordinator.Tell(
                 new TargetDiscoveryCompleted(
-                    new TargetSnapshot(discovery.RequestId, [])));
+                    discovery.RequestId,
+                    new TargetDiscoveryResult.Succeeded([])));
 
             var presentation = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
@@ -95,7 +96,8 @@ public sealed class NavigationCoordinatorRoutingTests
 
             coordinator.Tell(
                 new TargetDiscoveryCompleted(
-                    new TargetSnapshot(nextDiscovery.RequestId, [])));
+                    nextDiscovery.RequestId,
+                    new TargetDiscoveryResult.Succeeded([])));
             var nextPresentation = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
             var nextVisible = Assert.IsType<TargetPresentation.Visible>(
@@ -136,7 +138,9 @@ public sealed class NavigationCoordinatorRoutingTests
                 PresentationRevision.From(4),
                 nextCleanup.Revision);
             coordinator.Tell(
-                new TargetDiscoveryFailed(failedDiscovery.RequestId));
+                new TargetDiscoveryCompleted(
+                    failedDiscovery.RequestId,
+                    new TargetDiscoveryResult.Failed()));
 
             coordinator.Tell(
                 new GestureObserved(

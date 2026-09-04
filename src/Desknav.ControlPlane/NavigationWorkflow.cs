@@ -72,14 +72,36 @@ internal static class NavigationWorkflow
         TargetDiscoveryCompleted completed)
     {
         if (state.TargetDiscovery is not TargetDiscoveryLifecycle.Active active
-            || active.RequestId != completed.Snapshot.RequestId)
+            || active.RequestId != completed.RequestId)
         {
             return Decision(state);
         }
 
+        return completed.Result switch
+        {
+            TargetDiscoveryResult.Succeeded succeeded =>
+                CompleteTargetDiscovery(
+                    state,
+                    active,
+                    new TargetSnapshot(
+                        completed.RequestId,
+                        succeeded.Targets)),
+            TargetDiscoveryResult.Failed =>
+                FailTargetDiscovery(state, active),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(completed),
+                completed,
+                "Unknown target discovery result."),
+        };
+    }
+
+    private static NavigationDecision CompleteTargetDiscovery(
+        NavigationWorkflowState state,
+        TargetDiscoveryLifecycle.Active active,
+        TargetSnapshot snapshot)
+    {
         var nextRevision = state.Presentation.Revision.Increment();
-        var presentation = new TargetPresentation.Visible(
-            completed.Snapshot);
+        var presentation = new TargetPresentation.Visible(snapshot);
         return Decision(
             state with
             {
@@ -94,16 +116,10 @@ internal static class NavigationWorkflow
                 presentation));
     }
 
-    public static NavigationDecision Decide(
+    private static NavigationDecision FailTargetDiscovery(
         NavigationWorkflowState state,
-        TargetDiscoveryFailed failed)
+        TargetDiscoveryLifecycle.Active active)
     {
-        if (state.TargetDiscovery is not TargetDiscoveryLifecycle.Active active
-            || active.RequestId != failed.RequestId)
-        {
-            return Decision(state);
-        }
-
         return Decision(
             state with
             {

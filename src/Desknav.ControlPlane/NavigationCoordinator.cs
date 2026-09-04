@@ -25,7 +25,6 @@ public sealed class NavigationCoordinator : ReceiveActor
         Receive<KeyboardLayerUnavailable>(Handle);
         Receive<GestureObserved>(Handle);
         Receive<TargetDiscoveryCompleted>(Handle);
-        Receive<TargetDiscoveryFailed>(Handle);
         Receive<TargetPresentationApplied>(Handle);
     }
 
@@ -67,9 +66,6 @@ public sealed class NavigationCoordinator : ReceiveActor
 
     private void Handle(TargetDiscoveryCompleted completed)
         => Apply(NavigationWorkflow.Decide(_state, completed));
-
-    private void Handle(TargetDiscoveryFailed failed)
-        => Apply(NavigationWorkflow.Decide(_state, failed));
 
     private void Handle(TargetPresentationApplied applied)
         => Apply(NavigationWorkflow.Decide(_state, applied));
