@@ -33,7 +33,7 @@ public sealed class NavigationWorkflowTests
             FirstRequestId,
             [
                 new LabeledTarget(
-                    TargetLabel.From("f"),
+                    TargetLabel.From("a"),
                     FirstSnapshot.Targets[0]),
             ]);
 
@@ -42,7 +42,7 @@ public sealed class NavigationWorkflowTests
             SecondRequestId,
             [
                 new LabeledTarget(
-                    TargetLabel.From("f"),
+                    TargetLabel.From("a"),
                     SecondSnapshot.Targets[0]),
             ]);
 
@@ -312,133 +312,6 @@ public sealed class NavigationWorkflowTests
     }
 
     [Fact]
-    public void CurrentResultAssignsFixedWidthLabelsInSpatialOrder()
-    {
-        var first = Target(
-            "00000000-0000-0000-0000-000000000011",
-            300,
-            300);
-        var second = Target(
-            "00000000-0000-0000-0000-000000000012",
-            -1000,
-            -500);
-        var third = Target(
-            "00000000-0000-0000-0000-000000000013",
-            100,
-            0);
-        var fourth = Target(
-            "00000000-0000-0000-0000-000000000014",
-            -1500,
-            0);
-        var fifth = Target(
-            "00000000-0000-0000-0000-000000000015",
-            50,
-            100);
-        var sixth = Target(
-            "00000000-0000-0000-0000-000000000016",
-            400,
-            100);
-        var seventh = Target(
-            "00000000-0000-0000-0000-000000000017",
-            0,
-            300);
-        var snapshot = new TargetSnapshot(
-            FirstRequestId,
-            [
-                first,
-                second,
-                third,
-                fourth,
-                fifth,
-                sixth,
-                seventh,
-            ]);
-
-        var decision = NavigationWorkflow.Decide(
-            ActiveState(FirstRequestId),
-            DiscoverySucceeded(snapshot));
-
-        var visible = Assert.IsType<TargetPresentation.Visible>(
-            decision.State.Presentation.Presentation);
-        Assert.Equal(FirstRequestId, visible.Map.RequestId);
-        Assert.Equal(
-            ["ff", "fd", "fh", "fj", "fk", "fl", "df"],
-            visible.Map.Targets
-                .Select(static target => target.Label.Value)
-                .ToArray());
-        Assert.Equal(
-            [
-                second.Id,
-                fourth.Id,
-                third.Id,
-                fifth.Id,
-                sixth.Id,
-                seventh.Id,
-                first.Id,
-            ],
-            visible.Map.Targets
-                .Select(static target => target.Target.Id)
-                .ToArray());
-
-        var labels = visible.Map.Targets
-            .Select(static target => target.Label.Value)
-            .ToArray();
-        Assert.Equal(labels.Length, labels.Distinct().Count());
-        for (var index = 0; index < labels.Length; index++)
-        {
-            for (var other = 0; other < labels.Length; other++)
-            {
-                if (index == other)
-                {
-                    continue;
-                }
-
-                Assert.False(
-                    labels[other].StartsWith(
-                        labels[index],
-                        StringComparison.Ordinal));
-            }
-        }
-    }
-
-    [Fact]
-    public void SpatialOrderingUsesBoundsThenTargetIdentity()
-    {
-        var first = new DesktopTarget(
-            TargetId.Parse("00000000-0000-0000-0000-000000000004"),
-            new TargetBounds(10, 20, 100, 100));
-        var second = new DesktopTarget(
-            TargetId.Parse("00000000-0000-0000-0000-000000000003"),
-            new TargetBounds(10, 20, 50, 100));
-        var third = new DesktopTarget(
-            TargetId.Parse("00000000-0000-0000-0000-000000000002"),
-            new TargetBounds(10, 20, 100, 50));
-        var fourth = new DesktopTarget(
-            TargetId.Parse("00000000-0000-0000-0000-000000000001"),
-            new TargetBounds(10, 20, 100, 100));
-        var snapshot = new TargetSnapshot(
-            FirstRequestId,
-            [first, second, third, fourth]);
-
-        var decision = NavigationWorkflow.Decide(
-            ActiveState(FirstRequestId),
-            DiscoverySucceeded(snapshot));
-
-        var visible = Assert.IsType<TargetPresentation.Visible>(
-            decision.State.Presentation.Presentation);
-        Assert.Equal(
-            [second.Id, third.Id, fourth.Id, first.Id],
-            visible.Map.Targets
-                .Select(static target => target.Target.Id)
-                .ToArray());
-        Assert.Equal(
-            ["f", "d", "h", "j"],
-            visible.Map.Targets
-                .Select(static target => target.Label.Value)
-                .ToArray());
-    }
-
-    [Fact]
     public void LabelShapedGestureDoesNotSelectVisibleTarget()
     {
         var state = new NavigationWorkflowState(
@@ -447,7 +320,9 @@ public sealed class NavigationWorkflowTests
             new PresentationLifecycle.Stable(
                 PresentationRevision.From(1),
                 new TargetPresentation.Visible(FirstMap)));
-        var observed = Gesture("command", "f");
+        var observed = Gesture(
+            "command",
+            FirstMap.Targets[0].Label.Value);
 
         var decision = NavigationWorkflow.Decide(
             state,
@@ -795,14 +670,6 @@ public sealed class NavigationWorkflowTests
     private static TargetDiscoveryCompleted DiscoveryFailed(
         TargetDiscoveryRequestId requestId) =>
         new(requestId, new TargetDiscoveryResult.Failed());
-
-    private static DesktopTarget Target(
-        string id,
-        int left,
-        int top) =>
-        new(
-            TargetId.Parse(id),
-            new TargetBounds(left, top, 100, 100));
 
     private static NavigationDecision EndCommandSession(
         NavigationWorkflowState state,

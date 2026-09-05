@@ -93,9 +93,11 @@ public sealed class ValueObjectTests
 
     [Theory]
     [InlineData("")]
-    [InlineData("a")]
-    [InlineData("fx")]
-    public void TargetLabelAcceptsOnlyTheNavigationAlphabet(string value)
+    [InlineData("y")]
+    [InlineData("z")]
+    [InlineData("1")]
+    public void TargetLabelRejectsCharactersOutsideTheErgonomicAlphabet(
+        string value)
     {
         Assert.Throws<ValueObjectValidationException>(
             () => TargetLabel.From(value));

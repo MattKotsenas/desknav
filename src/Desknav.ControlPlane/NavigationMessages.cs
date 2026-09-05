@@ -82,10 +82,14 @@ public sealed record TargetSnapshot(
     TargetDiscoveryRequestId RequestId,
     ImmutableArray<DesktopTarget> Targets);
 
+/// <summary>
+/// Represents the exact keyboard token shared by the overlay and the future
+/// selection binding for one target.
+/// </summary>
 [ValueObject<string>(conversions: Conversions.None)]
 public readonly partial struct TargetLabel
 {
-    internal const string Alphabet = "fdhjkl";
+    internal const string Alphabet = "asdfghjklqwertuiopxcvbnm";
 
     private static Validation Validate(string value)
     {
@@ -101,6 +105,10 @@ public readonly partial struct TargetLabel
     }
 }
 
+/// <summary>
+/// Keeps the displayed input token bound to the exact discovered target that
+/// token will eventually select.
+/// </summary>
 public sealed record LabeledTarget
 {
     internal LabeledTarget(TargetLabel label, DesktopTarget target)
@@ -122,6 +130,10 @@ public sealed record LabeledTarget
     public DesktopTarget Target { get; }
 }
 
+/// <summary>
+/// Carries one control-plane-owned label binding across the presentation
+/// boundary so consumers never recompute which label identifies which target.
+/// </summary>
 public sealed class TargetMap : IEquatable<TargetMap>
 {
     internal TargetMap(

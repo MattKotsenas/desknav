@@ -296,6 +296,10 @@ internal static class NavigationWorkflow
         ImmutableArray<NavigationEffect> Effects);
 }
 
+/// <summary>
+/// Applies the current deterministic label policy without coupling that policy
+/// to the presentation contract or renderer.
+/// </summary>
 internal static class TargetLabelAllocator
 {
     public static TargetMap Create(TargetSnapshot snapshot)
@@ -307,37 +311,37 @@ internal static class TargetLabelAllocator
             .ThenBy(static target => target.Bounds.Height)
             .ThenBy(static target => target.Id.Value)
             .ToArray();
-        var width = LabelWidth(orderedTargets.Length);
+        var length = RequiredLabelLength(orderedTargets.Length);
         var labeledTargets = ImmutableArray.CreateBuilder<LabeledTarget>(
             orderedTargets.Length);
         for (var index = 0; index < orderedTargets.Length; index++)
         {
             labeledTargets.Add(
                 new LabeledTarget(
-                    TargetLabel.From(LabelFor(index, width)),
+                    TargetLabel.From(LabelFor(index, length)),
                     orderedTargets[index]));
         }
 
         return new TargetMap(snapshot.RequestId, labeledTargets.MoveToImmutable());
     }
 
-    private static int LabelWidth(int targetCount)
+    private static int RequiredLabelLength(int targetCount)
     {
-        var width = 1;
+        var length = 1;
         long capacity = TargetLabel.Alphabet.Length;
         while (capacity < targetCount)
         {
-            width++;
+            length++;
             capacity *= TargetLabel.Alphabet.Length;
         }
 
-        return width;
+        return length;
     }
 
-    private static string LabelFor(int index, int width)
+    private static string LabelFor(int index, int length)
     {
         return string.Create(
-            width,
+            length,
             index,
             static (characters, value) =>
             {

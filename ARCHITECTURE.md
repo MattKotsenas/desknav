@@ -239,13 +239,14 @@ not affect presentation. A current expected failure ends discovery without
 producing a presentation request.
 
 When it accepts a non-empty current result, the coordinator orders targets by
-top, left, width, height, and target identity, then assigns fixed-width labels
-from the `f d h j k l` alphabet. It allocates and owns the next presentation
-revision and sends that labeled target map to the overlay owner. An empty
-result ends discovery without presenting an empty scene. The WPF renderer
-translates each desktop target by the virtual desktop origin before placing
-its supplied label. After the overlay owner confirms that revision is
-rendered, label activation follows the
+top, left, width, height, and target identity, then assigns fixed-length labels
+from the home-row-first `a s d f g h j k l q w e r t u i o p x c v b n m`
+alphabet. It allocates and owns the next presentation revision and sends that
+labeled target map to the overlay owner. An empty result ends discovery
+without presenting an empty scene. The WPF renderer translates each desktop
+target by the virtual desktop origin before placing its supplied label. After
+the overlay owner confirms that revision is rendered, label activation
+follows the
 [capture-safe input contract](#local-kanata-actor). A stale scene must never
 select from a newer one.
 
