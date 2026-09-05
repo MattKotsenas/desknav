@@ -168,6 +168,19 @@ read-only UIA work, reports snapshots with their request identity, and never
 sends discovery results directly to presentation. Explicit UIA actions belong
 to the one-shot-action owner and carry an operation identity.
 
+The Windows UI Automation scanner reads a selected window's Control View. By
+default, the selected window is the foreground window. It records every
+observed control and treats one as eligible when it is
+enabled, on screen, has finite positive bounds, and supports Invoke, Toggle,
+SelectionItem, or ExpandCollapse. Its target dump is a thin diagnostic
+projection of that same capture, including exclusions and unavailable
+properties. UI Automation bounds remain physical screen pixels.
+
+Controls in a minimized captured window are not eligible, even when their
+provider reports them as on screen. Bounds must intersect a physical display.
+A scan fails instead of returning a partial capture when its Control View
+exceeds 10,000 elements or 128 levels.
+
 Target discovery bounds concurrent enumeration while allowing a replacement
 to overlap a canceled predecessor. At capacity, the owner retains only the
 newest pending request, reports an expected failure for pending work it

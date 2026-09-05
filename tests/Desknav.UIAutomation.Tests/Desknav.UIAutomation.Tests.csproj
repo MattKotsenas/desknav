@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>$(DefaultTargetFramework)-windows</TargetFramework>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Desknav.UIAutomation\Desknav.UIAutomation.csproj" />
+    <ProjectReference Include="..\Desknav.UIAutomation.Fixture\Desknav.UIAutomation.Fixture.csproj" />
+    <ProjectReference Include="..\..\src\Desknav.TargetDump\Desknav.TargetDump.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.mtp-v2" />
+  </ItemGroup>
+
+</Project>
