@@ -13,11 +13,22 @@ namespace Desknav.UI.Wpf;
 public sealed class WpfOverlayRenderer : IOverlayRenderer
 {
     private readonly Dispatcher _dispatcher;
+    private readonly VirtualDesktopBounds _desktopBounds;
 
-    public WpfOverlayRenderer(Dispatcher dispatcher)
+    public WpfOverlayRenderer(
+        Dispatcher dispatcher,
+        VirtualDesktopBounds desktopBounds)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
+        if (desktopBounds == default)
+        {
+            throw new ArgumentException(
+                "Virtual desktop bounds must be initialized.",
+                nameof(desktopBounds));
+        }
+
         _dispatcher = dispatcher;
+        _desktopBounds = desktopBounds;
     }
 
     internal Window? HostWindow { get; private set; }
@@ -113,7 +124,7 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
             TargetPresentation.Visible visible =>
                 new WpfVisibleScene(
                     this,
-                    new TargetScene(visible.Snapshot)),
+                    new TargetScene(visible.Map, _desktopBounds)),
             TargetPresentation.Hidden => new WpfHiddenScene(this),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(presentation),
@@ -162,23 +173,73 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
         }
     }
 
-    private static Window CreateWindow() =>
+    private Window CreateWindow() =>
         new()
         {
             AllowsTransparency = true,
             Background = Brushes.Transparent,
             Focusable = false,
-            Height = Math.Max(1, SystemParameters.VirtualScreenHeight),
+            Height = _desktopBounds.Height,
             IsHitTestVisible = false,
-            Left = SystemParameters.VirtualScreenLeft,
+            Left = _desktopBounds.Left,
             ResizeMode = ResizeMode.NoResize,
             ShowActivated = false,
             ShowInTaskbar = false,
-            Top = SystemParameters.VirtualScreenTop,
+            Top = _desktopBounds.Top,
             Topmost = true,
-            Width = Math.Max(1, SystemParameters.VirtualScreenWidth),
+            Width = _desktopBounds.Width,
             WindowStyle = WindowStyle.None,
         };
+}
+
+public readonly record struct VirtualDesktopBounds
+{
+    public VirtualDesktopBounds(
+        double left,
+        double top,
+        double width,
+        double height)
+    {
+        if (!double.IsFinite(left))
+        {
+            throw new ArgumentOutOfRangeException(nameof(left));
+        }
+
+        if (!double.IsFinite(top))
+        {
+            throw new ArgumentOutOfRangeException(nameof(top));
+        }
+
+        if (!double.IsFinite(width) || width <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width));
+        }
+
+        if (!double.IsFinite(height) || height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(height));
+        }
+
+        Left = left;
+        Top = top;
+        Width = width;
+        Height = height;
+    }
+
+    public static VirtualDesktopBounds Current =>
+        new(
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight);
+
+    public double Left { get; }
+
+    public double Top { get; }
+
+    public double Width { get; }
+
+    public double Height { get; }
 }
 
 internal abstract class WpfPreparedScene(
@@ -211,7 +272,53 @@ internal sealed class WpfVisibleScene(
 internal sealed class WpfHiddenScene(WpfOverlayRenderer renderer)
     : WpfPreparedScene(renderer);
 
-internal sealed class TargetScene(TargetSnapshot snapshot) : Canvas
+internal sealed class TargetScene : Canvas
 {
-    internal TargetSnapshot Snapshot { get; } = snapshot;
+    internal TargetScene(
+        TargetMap map,
+        VirtualDesktopBounds desktopBounds)
+    {
+        Map = map;
+        Width = desktopBounds.Width;
+        Height = desktopBounds.Height;
+        IsHitTestVisible = false;
+
+        foreach (var target in map.Targets)
+        {
+            var badge = new TargetBadge(target);
+            SetLeft(
+                badge,
+                target.Target.Bounds.Left - desktopBounds.Left);
+            SetTop(
+                badge,
+                target.Target.Bounds.Top - desktopBounds.Top);
+            Children.Add(badge);
+        }
+    }
+
+    internal TargetMap Map { get; }
+}
+
+internal sealed class TargetBadge : Border
+{
+    internal TargetBadge(LabeledTarget target)
+    {
+        Target = target;
+        Background = Brushes.Black;
+        BorderBrush = Brushes.White;
+        BorderThickness = new Thickness(1);
+        CornerRadius = new CornerRadius(3);
+        Padding = new Thickness(4, 2, 4, 2);
+        SnapsToDevicePixels = true;
+        Child = new TextBlock
+        {
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 14,
+            FontWeight = FontWeights.Bold,
+            Foreground = Brushes.White,
+            Text = target.Label.Value,
+        };
+    }
+
+    internal LabeledTarget Target { get; }
 }

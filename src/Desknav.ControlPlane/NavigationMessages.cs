@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 
 using Vogen;
@@ -81,6 +82,137 @@ public sealed record CancelTargetDiscovery(
 public sealed record TargetSnapshot(
     TargetDiscoveryRequestId RequestId,
     ImmutableArray<DesktopTarget> Targets);
+
+/// <summary>
+/// Represents the exact keyboard token shared by the overlay and the future
+/// selection binding for one target.
+/// </summary>
+[ValueObject<string>(conversions: Conversions.None)]
+public readonly partial struct TargetLabel
+{
+    internal const string Alphabet = "asdfghjklqwertuiopxcvbnm";
+    private static readonly SearchValues<char> AllowedCharacters =
+        SearchValues.Create(Alphabet);
+
+    private static Validation Validate(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Validation.Invalid("A target label cannot be empty.");
+        }
+
+        return value.AsSpan().ContainsAnyExcept(AllowedCharacters)
+            ? Validation.Invalid(
+                $"A target label may contain only '{Alphabet}'.")
+            : Validation.Ok;
+    }
+}
+
+/// <summary>
+/// Keeps the displayed input token bound to the exact discovered target that
+/// token will eventually select.
+/// </summary>
+public sealed record LabeledTarget
+{
+    internal LabeledTarget(TargetLabel label, DesktopTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (string.IsNullOrEmpty(label.Value))
+        {
+            throw new ArgumentException(
+                "A target label must be initialized.",
+                nameof(label));
+        }
+
+        Label = label;
+        Target = target;
+    }
+
+    public TargetLabel Label { get; }
+
+    public DesktopTarget Target { get; }
+}
+
+/// <summary>
+/// Carries one control-plane-owned label binding across the presentation
+/// boundary so consumers never recompute which label identifies which target.
+/// </summary>
+public sealed class TargetMap : IEquatable<TargetMap>
+{
+    internal TargetMap(
+        TargetDiscoveryRequestId requestId,
+        ImmutableArray<LabeledTarget> targets)
+    {
+        if (targets.IsDefaultOrEmpty)
+        {
+            throw new ArgumentException(
+                "A target map must contain at least one target.",
+                nameof(targets));
+        }
+
+        if (targets.Any(static target => target is null))
+        {
+            throw new ArgumentException(
+                "A target map cannot contain null targets.",
+                nameof(targets));
+        }
+
+        var labels = targets
+            .Select(static target => target.Label.Value)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        for (var index = 1; index < labels.Length; index++)
+        {
+            if (labels[index].StartsWith(
+                    labels[index - 1],
+                    StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    "Target labels must be unique, with no label a prefix"
+                    + " of another.",
+                    nameof(targets));
+            }
+        }
+
+        if (targets
+                .Select(static target => target.Target.Id)
+                .Distinct()
+                .Count()
+            != targets.Length)
+        {
+            throw new ArgumentException(
+                "A target map cannot contain a target more than once.",
+                nameof(targets));
+        }
+
+        RequestId = requestId;
+        Targets = targets;
+    }
+
+    public TargetDiscoveryRequestId RequestId { get; }
+
+    public ImmutableArray<LabeledTarget> Targets { get; }
+
+    public bool Equals(TargetMap? other) =>
+        other is not null
+        && RequestId == other.RequestId
+        && Targets.SequenceEqual(other.Targets);
+
+    public override bool Equals(object? obj) =>
+        obj is TargetMap other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(RequestId);
+        foreach (var target in Targets)
+        {
+            hash.Add(target);
+        }
+
+        return hash.ToHashCode();
+    }
+}
 
 /// <summary>
 /// Distinguishes observed targets from an expected inability to enumerate
