@@ -1,3 +1,5 @@
+using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 
 using Akka.Actor;
@@ -8,19 +10,22 @@ namespace Desknav.UI.Wpf.Tests;
 
 public sealed class WpfOverlayRendererTests
 {
+    private static readonly VirtualDesktopBounds TestDesktop =
+        new(-1920, -1080, 3840, 2160);
+
     [Fact]
     public async Task VisiblePreparationCreatesDispatcherOwnedScene()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
-        var snapshot = Snapshot();
+        var renderer = Renderer(dispatcher.Dispatcher);
+        var map = Map();
 
         var scene = Assert.IsType<WpfVisibleScene>(
             await Task.Run(
                 () => renderer.PrepareAsync(
-                    new TargetPresentation.Visible(snapshot),
+                    new TargetPresentation.Visible(map),
                     CancellationToken.None)));
-        Assert.Same(snapshot, scene.View.Snapshot);
+        Assert.Same(map, scene.View.Map);
         Assert.Same(dispatcher.Dispatcher, scene.View.Dispatcher);
         Assert.Null(
             await dispatcher.InvokeAsync(() => renderer.HostWindow));
@@ -32,7 +37,7 @@ public sealed class WpfOverlayRendererTests
     public async Task HiddenPreparationCreatesHiddenScene()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var renderer = Renderer(dispatcher.Dispatcher);
 
         var scene = await renderer.PrepareAsync(
             new TargetPresentation.Hidden(),
@@ -60,10 +65,10 @@ public sealed class WpfOverlayRendererTests
                 releaseDispatcher.Wait();
             });
         await dispatcherBlocked.Task;
-        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var renderer = Renderer(dispatcher.Dispatcher);
 
         var preparation = renderer.PrepareAsync(
-            new TargetPresentation.Visible(Snapshot()),
+            new TargetPresentation.Visible(Map()),
             cancellation.Token);
         cancellation.Cancel();
         releaseDispatcher.Set();
@@ -77,10 +82,10 @@ public sealed class WpfOverlayRendererTests
     public async Task ActivationMapsVisibleAndHiddenPresentation()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var renderer = Renderer(dispatcher.Dispatcher);
         var visible = Assert.IsType<WpfVisibleScene>(
             await renderer.PrepareAsync(
-                new TargetPresentation.Visible(Snapshot()),
+                new TargetPresentation.Visible(Map()),
                 CancellationToken.None));
 
         await renderer.ActivateAsync(visible);
@@ -123,9 +128,9 @@ public sealed class WpfOverlayRendererTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var renderWorkStarted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var renderer = Renderer(dispatcher.Dispatcher);
         var scene = await renderer.PrepareAsync(
-            new TargetPresentation.Visible(Snapshot()),
+            new TargetPresentation.Visible(Map()),
             TestContext.Current.CancellationToken);
 
         var blockingOperation = dispatcher.Dispatcher.InvokeAsync(
@@ -171,14 +176,14 @@ public sealed class WpfOverlayRendererTests
     public async Task DisposingSupersededSceneDoesNotChangeActiveScene()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var renderer = Renderer(dispatcher.Dispatcher);
         var superseded = Assert.IsType<WpfVisibleScene>(
             await renderer.PrepareAsync(
-                new TargetPresentation.Visible(Snapshot()),
+                new TargetPresentation.Visible(Map()),
                 CancellationToken.None));
         var active = Assert.IsType<WpfVisibleScene>(
             await renderer.PrepareAsync(
-                new TargetPresentation.Visible(Snapshot()),
+                new TargetPresentation.Visible(Map()),
                 CancellationToken.None));
 
         await renderer.ActivateAsync(superseded);
@@ -201,9 +206,9 @@ public sealed class WpfOverlayRendererTests
     public async Task DisposingActiveSceneClosesHostWindow()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var renderer = Renderer(dispatcher.Dispatcher);
         var active = await renderer.PrepareAsync(
-            new TargetPresentation.Visible(Snapshot()),
+            new TargetPresentation.Visible(Map()),
             CancellationToken.None);
         await renderer.ActivateAsync(active);
 
@@ -219,10 +224,10 @@ public sealed class WpfOverlayRendererTests
     public async Task RendererRejectsSceneFromAnotherRenderer()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        var owner = new WpfOverlayRenderer(dispatcher.Dispatcher);
-        var other = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var owner = Renderer(dispatcher.Dispatcher);
+        var other = Renderer(dispatcher.Dispatcher);
         var scene = await owner.PrepareAsync(
-            new TargetPresentation.Visible(Snapshot()),
+            new TargetPresentation.Visible(Map()),
             CancellationToken.None);
 
         await Assert.ThrowsAsync<ArgumentException>(
@@ -237,7 +242,7 @@ public sealed class WpfOverlayRendererTests
         await using var dispatcher = new WpfDispatcherThread();
         using var timeout =
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var renderer = Renderer(dispatcher.Dispatcher);
         var applied =
             new TaskCompletionSource<TargetPresentationApplied>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -255,7 +260,7 @@ public sealed class WpfOverlayRendererTests
             overlay.Tell(
                 new ApplyTargetPresentation(
                     revision,
-                    new TargetPresentation.Visible(Snapshot())),
+                    new TargetPresentation.Visible(Map())),
                 coordinator);
 
             Assert.Equal(
@@ -276,14 +281,83 @@ public sealed class WpfOverlayRendererTests
         }
     }
 
-    private static TargetSnapshot Snapshot() =>
+    [Fact]
+    public async Task VisibleSceneManifestUsesSuppliedLabelsAndVirtualOrigin()
+    {
+        await using var dispatcher = new WpfDispatcherThread();
+        var renderer = Renderer(dispatcher.Dispatcher);
+        var first = new DesktopTarget(
+            TargetId.Parse("00000000-0000-0000-0000-000000000001"),
+            new TargetBounds(-1000, -500, 300, 200));
+        var second = new DesktopTarget(
+            TargetId.Parse("00000000-0000-0000-0000-000000000002"),
+            new TargetBounds(100, 200, 400, 300));
+        var map = new TargetMap(
+            TargetDiscoveryRequestId.New(),
+            [
+                new LabeledTarget(TargetLabel.From("lk"), first),
+                new LabeledTarget(TargetLabel.From("df"), second),
+            ]);
+        var scene = Assert.IsType<WpfVisibleScene>(
+            await renderer.PrepareAsync(
+                new TargetPresentation.Visible(map),
+                TestContext.Current.CancellationToken));
+
+        var manifest = await dispatcher.InvokeAsync(
+            () => SceneManifest(scene.View));
+
+        Assert.Equal(
+            [
+                new RenderedBadge(first.Id, "lk", 920, 580),
+                new RenderedBadge(second.Id, "df", 2020, 1280),
+            ],
+            manifest);
+        await scene.DisposeAsync();
+    }
+
+    private static WpfOverlayRenderer Renderer(Dispatcher dispatcher) =>
+        new(dispatcher, TestDesktop);
+
+    private static TargetMap Map() =>
         new(
             TargetDiscoveryRequestId.New(),
             [
-                new DesktopTarget(
-                    TargetId.New(),
-                    new TargetBounds(100, 200, 800, 600)),
+                new LabeledTarget(
+                    TargetLabel.From("f"),
+                    new DesktopTarget(
+                        TargetId.New(),
+                        new TargetBounds(100, 200, 800, 600))),
             ]);
+
+    private static RenderedBadge[] SceneManifest(TargetScene scene)
+    {
+        scene.Measure(new Size(scene.Width, scene.Height));
+        scene.Arrange(new Rect(0, 0, scene.Width, scene.Height));
+        scene.UpdateLayout();
+
+        return scene.Children
+            .Cast<TargetBadge>()
+            .Select(
+                badge =>
+                {
+                    Assert.True(badge.ActualWidth > 0);
+                    Assert.True(badge.ActualHeight > 0);
+                    var label = Assert.IsType<TextBlock>(badge.Child);
+                    var origin = badge.TranslatePoint(new Point(), scene);
+                    return new RenderedBadge(
+                        badge.Target.Target.Id,
+                        label.Text,
+                        origin.X,
+                        origin.Y);
+                })
+            .ToArray();
+    }
+
+    private sealed record RenderedBadge(
+        TargetId TargetId,
+        string Label,
+        double Left,
+        double Top);
 
     private sealed class RecordingActor : ReceiveActor
     {

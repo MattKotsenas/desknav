@@ -81,7 +81,10 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
             Assert.Equal(
                 PresentationRevision.From(1),
                 presentation.Revision);
-            Assert.Equal(currentTargets, visible.Snapshot.Targets);
+            Assert.Equal(
+                currentTargets,
+                visible.Map.Targets
+                    .Select(static target => target.Target));
 
             overlayOwner.Tell(PoisonPill.Instance);
             await presentations.Reader.Completion.WaitAsync(timeout.Token);

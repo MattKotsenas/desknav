@@ -17,7 +17,7 @@ public readonly partial struct PresentationRevision
 
 public abstract record TargetPresentation
 {
-    public sealed record Visible(TargetSnapshot Snapshot)
+    public sealed record Visible(TargetMap Map)
         : TargetPresentation;
 
     public sealed record Hidden
