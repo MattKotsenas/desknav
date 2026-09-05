@@ -23,6 +23,10 @@ Each pull request contains exactly one logical idea. Its description states:
 Every change in the pull request must be necessary and sufficient for that
 single idea.
 
+A pull request that intentionally changes rendered UI includes a screenshot in
+its description. Show before and after when changing existing UI; show the
+result when introducing new UI.
+
 ## Verification
 
 Run the repository verification for code or configuration changes:
