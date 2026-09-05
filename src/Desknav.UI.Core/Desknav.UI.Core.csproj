@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Desknav.UI</RootNamespace>
+    <TargetFramework>$(DefaultTargetFramework)</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Desknav.ControlPlane\Desknav.ControlPlane.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Akka" />
+  </ItemGroup>
+
+</Project>
