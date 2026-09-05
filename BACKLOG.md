@@ -72,6 +72,10 @@ after command-mode exit, Kanata still reaches observed passthrough and the
 next ordinary key reaches Windows within the direct-passthrough acceptance
 bound.
 
+A later UX pass refines badge typography, padding, shape, placement, and DPI
+scaling using screenshots across representative target sizes and desktop
+layouts.
+
 One-shot-action scenarios lose a UIA or pointer result after dispatch and prove
 the executor records exactly one dispatch for that logical action across every
 exercised recovery path and operation identity. A conflicting operation waits

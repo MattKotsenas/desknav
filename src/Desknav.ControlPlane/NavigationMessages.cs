@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 
 using Vogen;
@@ -90,6 +91,8 @@ public sealed record TargetSnapshot(
 public readonly partial struct TargetLabel
 {
     internal const string Alphabet = "asdfghjklqwertuiopxcvbnm";
+    private static readonly SearchValues<char> AllowedCharacters =
+        SearchValues.Create(Alphabet);
 
     private static Validation Validate(string value)
     {
@@ -98,10 +101,10 @@ public readonly partial struct TargetLabel
             return Validation.Invalid("A target label cannot be empty.");
         }
 
-        return value.All(Alphabet.Contains)
-            ? Validation.Ok
-            : Validation.Invalid(
-                $"A target label may contain only '{Alphabet}'.");
+        return value.AsSpan().ContainsAnyExcept(AllowedCharacters)
+            ? Validation.Invalid(
+                $"A target label may contain only '{Alphabet}'.")
+            : Validation.Ok;
     }
 }
 
