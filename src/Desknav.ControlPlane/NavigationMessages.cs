@@ -82,6 +82,123 @@ public sealed record TargetSnapshot(
     TargetDiscoveryRequestId RequestId,
     ImmutableArray<DesktopTarget> Targets);
 
+[ValueObject<string>(conversions: Conversions.None)]
+public readonly partial struct TargetLabel
+{
+    internal const string Alphabet = "fdhjkl";
+
+    private static Validation Validate(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Validation.Invalid("A target label cannot be empty.");
+        }
+
+        return value.All(Alphabet.Contains)
+            ? Validation.Ok
+            : Validation.Invalid(
+                $"A target label may contain only '{Alphabet}'.");
+    }
+}
+
+public sealed record LabeledTarget
+{
+    internal LabeledTarget(TargetLabel label, DesktopTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (string.IsNullOrEmpty(label.Value))
+        {
+            throw new ArgumentException(
+                "A target label must be initialized.",
+                nameof(label));
+        }
+
+        Label = label;
+        Target = target;
+    }
+
+    public TargetLabel Label { get; }
+
+    public DesktopTarget Target { get; }
+}
+
+public sealed class TargetMap : IEquatable<TargetMap>
+{
+    internal TargetMap(
+        TargetDiscoveryRequestId requestId,
+        ImmutableArray<LabeledTarget> targets)
+    {
+        if (targets.IsDefaultOrEmpty)
+        {
+            throw new ArgumentException(
+                "A target map must contain at least one target.",
+                nameof(targets));
+        }
+
+        if (targets.Any(static target => target is null))
+        {
+            throw new ArgumentException(
+                "A target map cannot contain null targets.",
+                nameof(targets));
+        }
+
+        var labels = targets
+            .Select(static target => target.Label.Value)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        for (var index = 1; index < labels.Length; index++)
+        {
+            if (labels[index].StartsWith(
+                    labels[index - 1],
+                    StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    "Target labels must be unique, with no label a prefix"
+                    + " of another.",
+                    nameof(targets));
+            }
+        }
+
+        if (targets
+                .Select(static target => target.Target.Id)
+                .Distinct()
+                .Count()
+            != targets.Length)
+        {
+            throw new ArgumentException(
+                "A target map cannot contain a target more than once.",
+                nameof(targets));
+        }
+
+        RequestId = requestId;
+        Targets = targets;
+    }
+
+    public TargetDiscoveryRequestId RequestId { get; }
+
+    public ImmutableArray<LabeledTarget> Targets { get; }
+
+    public bool Equals(TargetMap? other) =>
+        other is not null
+        && RequestId == other.RequestId
+        && Targets.SequenceEqual(other.Targets);
+
+    public override bool Equals(object? obj) =>
+        obj is TargetMap other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(RequestId);
+        foreach (var target in Targets)
+        {
+            hash.Add(target);
+        }
+
+        return hash.ToHashCode();
+    }
+}
+
 /// <summary>
 /// Distinguishes observed targets from an expected inability to enumerate
 /// without turning either into an exception.

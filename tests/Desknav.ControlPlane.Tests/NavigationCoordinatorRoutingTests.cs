@@ -52,7 +52,8 @@ public sealed class NavigationCoordinatorRoutingTests
             coordinator.Tell(
                 new TargetDiscoveryCompleted(
                     discovery.RequestId,
-                    new TargetDiscoveryResult.Succeeded([])));
+                    new TargetDiscoveryResult.Succeeded(
+                        [Target()])));
 
             var presentation = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
@@ -60,7 +61,7 @@ public sealed class NavigationCoordinatorRoutingTests
                 presentation.Presentation);
             Assert.Equal(
                 discovery.RequestId,
-                visible.Snapshot.RequestId);
+                visible.Map.RequestId);
             Assert.Equal(
                 PresentationRevision.From(1),
                 presentation.Revision);
@@ -97,14 +98,15 @@ public sealed class NavigationCoordinatorRoutingTests
             coordinator.Tell(
                 new TargetDiscoveryCompleted(
                     nextDiscovery.RequestId,
-                    new TargetDiscoveryResult.Succeeded([])));
+                    new TargetDiscoveryResult.Succeeded(
+                        [Target()])));
             var nextPresentation = Assert.IsType<ApplyTargetPresentation>(
                 await presentations.Reader.ReadAsync(timeout.Token));
             var nextVisible = Assert.IsType<TargetPresentation.Visible>(
                 nextPresentation.Presentation);
             Assert.Equal(
                 nextDiscovery.RequestId,
-                nextVisible.Snapshot.RequestId);
+                nextVisible.Map.RequestId);
             Assert.Equal(
                 PresentationRevision.From(3),
                 nextPresentation.Revision);
@@ -173,4 +175,9 @@ public sealed class NavigationCoordinatorRoutingTests
             await system.Terminate();
         }
     }
+
+    private static DesktopTarget Target() =>
+        new(
+            TargetId.New(),
+            new TargetBounds(100, 200, 800, 600));
 }

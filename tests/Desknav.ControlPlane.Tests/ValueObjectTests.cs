@@ -91,6 +91,44 @@ public sealed class ValueObjectTests
         Assert.Equal("bounds", exception.ParamName);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("a")]
+    [InlineData("fx")]
+    public void TargetLabelAcceptsOnlyTheNavigationAlphabet(string value)
+    {
+        Assert.Throws<ValueObjectValidationException>(
+            () => TargetLabel.From(value));
+    }
+
+    [Fact]
+    public void TargetMapRejectsLabelsWithPrefixAmbiguity()
+    {
+        var targets = new[]
+        {
+            new DesktopTarget(
+                TargetId.New(),
+                new TargetBounds(0, 0, 100, 100)),
+            new DesktopTarget(
+                TargetId.New(),
+                new TargetBounds(100, 0, 100, 100)),
+        };
+
+        var exception = Assert.Throws<ArgumentException>(
+            () => new TargetMap(
+                TargetDiscoveryRequestId.New(),
+                [
+                    new LabeledTarget(
+                        TargetLabel.From("f"),
+                        targets[0]),
+                    new LabeledTarget(
+                        TargetLabel.From("ff"),
+                        targets[1]),
+                ]));
+
+        Assert.Equal("targets", exception.ParamName);
+    }
+
     [Fact]
     public void GeneratedIdentifiersAreNonEmpty()
     {

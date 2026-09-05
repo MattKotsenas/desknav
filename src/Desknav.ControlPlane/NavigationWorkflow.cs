@@ -100,13 +100,23 @@ internal static class NavigationWorkflow
         TargetDiscoveryLifecycle.Active active,
         TargetSnapshot snapshot)
     {
+        var idle = new TargetDiscoveryLifecycle.Idle(active.Generation);
+        if (snapshot.Targets.IsEmpty)
+        {
+            return Decision(
+                state with
+                {
+                    TargetDiscovery = idle,
+                });
+        }
+
         var nextRevision = state.Presentation.Revision.Increment();
-        var presentation = new TargetPresentation.Visible(snapshot);
+        var presentation = new TargetPresentation.Visible(
+            TargetLabelAllocator.Create(snapshot));
         return Decision(
             state with
             {
-                TargetDiscovery =
-                    new TargetDiscoveryLifecycle.Idle(active.Generation),
+                TargetDiscovery = idle,
                 Presentation = new PresentationLifecycle.Applying(
                     nextRevision,
                     presentation),
@@ -255,7 +265,7 @@ internal static class NavigationWorkflow
             TargetDiscoveryLifecycle.Active active =>
                 active.Generation.Value,
             TargetDiscoveryLifecycle.Idle
-                { LastGeneration: { } generation } =>
+            { LastGeneration: { } generation } =>
                 generation.Value,
             TargetDiscoveryLifecycle.Idle => 0,
             _ => throw new InvalidOperationException(
@@ -284,4 +294,62 @@ internal static class NavigationWorkflow
     private sealed record PresentationInvalidation(
         PresentationLifecycle Presentation,
         ImmutableArray<NavigationEffect> Effects);
+}
+
+internal static class TargetLabelAllocator
+{
+    public static TargetMap Create(TargetSnapshot snapshot)
+    {
+        var orderedTargets = snapshot.Targets
+            .OrderBy(static target => target.Bounds.Top)
+            .ThenBy(static target => target.Bounds.Left)
+            .ThenBy(static target => target.Bounds.Width)
+            .ThenBy(static target => target.Bounds.Height)
+            .ThenBy(static target => target.Id.Value)
+            .ToArray();
+        var width = LabelWidth(orderedTargets.Length);
+        var labeledTargets = ImmutableArray.CreateBuilder<LabeledTarget>(
+            orderedTargets.Length);
+        for (var index = 0; index < orderedTargets.Length; index++)
+        {
+            labeledTargets.Add(
+                new LabeledTarget(
+                    TargetLabel.From(LabelFor(index, width)),
+                    orderedTargets[index]));
+        }
+
+        return new TargetMap(snapshot.RequestId, labeledTargets.MoveToImmutable());
+    }
+
+    private static int LabelWidth(int targetCount)
+    {
+        var width = 1;
+        long capacity = TargetLabel.Alphabet.Length;
+        while (capacity < targetCount)
+        {
+            width++;
+            capacity *= TargetLabel.Alphabet.Length;
+        }
+
+        return width;
+    }
+
+    private static string LabelFor(int index, int width)
+    {
+        return string.Create(
+            width,
+            index,
+            static (characters, value) =>
+            {
+                for (var position = characters.Length - 1;
+                     position >= 0;
+                     position--)
+                {
+                    characters[position] =
+                        TargetLabel.Alphabet[
+                            value % TargetLabel.Alphabet.Length];
+                    value /= TargetLabel.Alphabet.Length;
+                }
+            });
+    }
 }
