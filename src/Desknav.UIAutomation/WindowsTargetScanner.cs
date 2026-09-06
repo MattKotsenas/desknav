@@ -5,7 +5,7 @@ using System.Windows.Automation;
 
 namespace Desknav.UIAutomation;
 
-public sealed class WindowsTargetScanner
+public sealed partial class WindowsTargetScanner
 {
     private const int DefaultMaximumDepth = 128;
     private const int DefaultMaximumElements = 10_000;
@@ -18,7 +18,7 @@ public sealed class WindowsTargetScanner
         : this(
             DefaultMaximumDepth,
             DefaultMaximumElements,
-            GetForegroundWindow)
+            NativeMethods.GetForegroundWindow)
     {
     }
 
@@ -32,7 +32,8 @@ public sealed class WindowsTargetScanner
 
         _maximumDepth = maximumDepth;
         _maximumElements = maximumElements;
-        _foregroundWindow = foregroundWindow ?? GetForegroundWindow;
+        _foregroundWindow =
+            foregroundWindow ?? NativeMethods.GetForegroundWindow;
     }
 
     public Task<UiAutomationCapture> CaptureForegroundWindowAsync(
@@ -81,6 +82,8 @@ public sealed class WindowsTargetScanner
                 cancellationToken);
         }
 
+        // Desktop UIA calls belong on an MTA worker, not the caller's
+        // UI thread.
         return Task.Run(
             () => CaptureWindow(windowHandle, cancellationToken),
             cancellationToken);
@@ -95,7 +98,7 @@ public sealed class WindowsTargetScanner
         var root = AutomationElement.FromHandle(windowHandle)
             ?? throw new InvalidOperationException(
                 $"UI Automation could not find window {windowHandle}.");
-        var isMinimized = IsIconic(windowHandle);
+        var isMinimized = NativeMethods.IsIconic(windowHandle);
         var window = new UiAutomationWindowCapture(
             windowHandle.ToInt64(),
             root.Current.ProcessId,
@@ -363,7 +366,7 @@ public sealed class WindowsTargetScanner
             (int)Math.Floor(bounds.Top),
             (int)Math.Ceiling(bounds.Right),
             (int)Math.Ceiling(bounds.Bottom));
-        return MonitorFromRect(
+        return NativeMethods.MonitorFromRect(
                 ref rectangle,
                 flags: 0)
             != 0;
@@ -433,22 +436,6 @@ public sealed class WindowsTargetScanner
         return request;
     }
 
-    [DllImport("user32.dll")]
-    private static extern nint GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsIconic(nint windowHandle);
-
-    [DllImport("user32.dll")]
-    private static extern nint MonitorFromRect(
-        ref NativeRectangle rectangle,
-        uint flags);
-
-    [DllImport("user32.dll")]
-    private static extern nint SetThreadDpiAwarenessContext(
-        nint dpiContext);
-
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRectangle
     {
@@ -473,12 +460,31 @@ public sealed class WindowsTargetScanner
         public int Bottom;
     }
 
+    private static partial class NativeMethods
+    {
+        [LibraryImport("user32.dll")]
+        internal static partial nint GetForegroundWindow();
+
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static partial bool IsIconic(nint windowHandle);
+
+        [LibraryImport("user32.dll")]
+        internal static partial nint MonitorFromRect(
+            ref NativeRectangle rectangle,
+            uint flags);
+
+        [LibraryImport("user32.dll")]
+        internal static partial nint SetThreadDpiAwarenessContext(
+            nint dpiContext);
+    }
+
     private readonly struct DpiAwarenessScope(nint previous)
         : IDisposable
     {
         public static DpiAwarenessScope Enter()
         {
-            var previous = SetThreadDpiAwarenessContext(
+            var previous = NativeMethods.SetThreadDpiAwarenessContext(
                 PerMonitorAwareV2);
             return previous == 0
                 ? throw new InvalidOperationException(
@@ -489,7 +495,7 @@ public sealed class WindowsTargetScanner
 
         public void Dispose()
         {
-            if (SetThreadDpiAwarenessContext(previous) == 0)
+            if (NativeMethods.SetThreadDpiAwarenessContext(previous) == 0)
             {
                 throw new InvalidOperationException(
                     "Windows failed to restore the UI Automation"
