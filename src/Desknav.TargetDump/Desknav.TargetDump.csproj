@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Desknav.UIAutomation\Desknav.UIAutomation.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>$(DefaultTargetFramework)-windows</TargetFramework>
+  </PropertyGroup>
+
+</Project>

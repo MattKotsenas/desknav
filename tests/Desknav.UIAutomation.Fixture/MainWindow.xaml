@@ -1,0 +1,49 @@
+﻿<Window x:Class="Desknav.UIAutomation.Fixture.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Desknav.UIAutomation.Fixture"
+        Title="Desknav UIA Fixture"
+        Width="480"
+        Height="420"
+        WindowStartupLocation="CenterScreen">
+    <StackPanel Margin="12">
+        <UniformGrid Columns="3"
+                     Rows="2"
+                     Height="80"
+                     Margin="0,0,0,8">
+            <Button AutomationProperties.AutomationId="invoke-target">
+                Invoke target
+            </Button>
+            <CheckBox AutomationProperties.AutomationId="toggle-target">
+                Toggle target
+            </CheckBox>
+            <ListBox>
+                <ListBoxItem AutomationProperties.AutomationId="selection-target">
+                    Selection target
+                </ListBoxItem>
+            </ListBox>
+            <Expander AutomationProperties.AutomationId="expand-target"
+                      Header="Expand target">
+                <TextBlock>Expanded content</TextBlock>
+            </Expander>
+            <local:LeafExpandCollapseControl
+                    AutomationProperties.AutomationId="leaf-target"
+                    Content="Leaf target" />
+        </UniformGrid>
+        <TextBlock AutomationProperties.AutomationId="read-only-text"
+                   Margin="0,0,0,8">
+            Read-only text
+        </TextBlock>
+        <local:RawOnlyButton
+                AutomationProperties.AutomationId="raw-only-target"
+                Height="40"
+                Margin="0,0,0,8">
+            Raw-only target
+        </local:RawOnlyButton>
+        <Button AutomationProperties.AutomationId="disabled-target"
+                Height="40"
+                IsEnabled="False">
+            Disabled target
+        </Button>
+    </StackPanel>
+</Window>
