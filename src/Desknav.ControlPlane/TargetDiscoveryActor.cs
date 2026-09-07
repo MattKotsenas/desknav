@@ -538,7 +538,7 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 /// <summary>
 /// Isolates platform target enumeration from actor request management.
 /// </summary>
-internal interface ITargetDiscovery
+public interface ITargetDiscovery
 {
     /// <summary>
     /// Performs one target enumeration. Expected inability to enumerate

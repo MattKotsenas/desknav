@@ -55,7 +55,7 @@ public sealed partial class WindowsTargetScanner
         if (windowHandle == 0)
         {
             return Task.FromException<UiAutomationCapture>(
-                new InvalidOperationException(
+                new UiAutomationCaptureException(
                     "Windows did not report a foreground window."));
         }
 
@@ -96,7 +96,7 @@ public sealed partial class WindowsTargetScanner
         cancellationToken.ThrowIfCancellationRequested();
         using var dpiAwareness = DpiAwarenessScope.Enter();
         var root = AutomationElement.FromHandle(windowHandle)
-            ?? throw new InvalidOperationException(
+            ?? throw new UiAutomationCaptureException(
                 $"UI Automation could not find window {windowHandle}.");
         var isMinimized = NativeMethods.IsIconic(windowHandle);
         var window = new UiAutomationWindowCapture(
@@ -131,7 +131,7 @@ public sealed partial class WindowsTargetScanner
     {
         if (parentPath.Length >= _maximumDepth)
         {
-            throw new InvalidOperationException(
+            throw new UiAutomationCaptureException(
                 $"The UI Automation tree exceeded {_maximumDepth} levels.");
         }
 
@@ -143,7 +143,7 @@ public sealed partial class WindowsTargetScanner
             cancellationToken.ThrowIfCancellationRequested();
             if (elements.Count >= _maximumElements)
             {
-                throw new InvalidOperationException(
+                throw new UiAutomationCaptureException(
                     $"The UI Automation tree exceeded {_maximumElements}"
                     + " control elements.");
             }
@@ -361,11 +361,12 @@ public sealed partial class WindowsTargetScanner
 
     private static bool IntersectsDisplay(PhysicalBounds bounds)
     {
+        var edges = bounds.OutwardEdges;
         var rectangle = new NativeRectangle(
-            (int)Math.Floor(bounds.Left),
-            (int)Math.Floor(bounds.Top),
-            (int)Math.Ceiling(bounds.Right),
-            (int)Math.Ceiling(bounds.Bottom));
+            edges.Left,
+            edges.Top,
+            edges.Right,
+            edges.Bottom);
         return NativeMethods.MonitorFromRect(
                 ref rectangle,
                 flags: 0)
@@ -487,7 +488,7 @@ public sealed partial class WindowsTargetScanner
             var previous = NativeMethods.SetThreadDpiAwarenessContext(
                 PerMonitorAwareV2);
             return previous == 0
-                ? throw new InvalidOperationException(
+                ? throw new UiAutomationCaptureException(
                     "Windows refused the UI Automation thread's"
                     + " per-monitor DPI awareness context.")
                 : new DpiAwarenessScope(previous);
@@ -497,13 +498,16 @@ public sealed partial class WindowsTargetScanner
         {
             if (NativeMethods.SetThreadDpiAwarenessContext(previous) == 0)
             {
-                throw new InvalidOperationException(
+                throw new UiAutomationCaptureException(
                     "Windows failed to restore the UI Automation"
                     + " thread's DPI awareness context.");
             }
         }
     }
 }
+
+internal sealed class UiAutomationCaptureException(string message)
+    : InvalidOperationException(message);
 
 public sealed record UiAutomationCapture(
     UiAutomationWindowCapture Window,
@@ -562,6 +566,13 @@ public readonly record struct PhysicalBounds
 
     internal double Right => Left + Width;
 
+    internal PhysicalEdges OutwardEdges =>
+        new(
+            (int)Math.Floor(Left),
+            (int)Math.Floor(Top),
+            (int)Math.Ceiling(Right),
+            (int)Math.Ceiling(Bottom));
+
     internal static PhysicalBounds? TryCreate(
         double left,
         double top,
@@ -589,6 +600,12 @@ public readonly record struct PhysicalBounds
         return new PhysicalBounds(left, top, width, height);
     }
 }
+
+internal readonly record struct PhysicalEdges(
+    int Left,
+    int Top,
+    int Right,
+    int Bottom);
 
 public enum UiAutomationAction
 {
