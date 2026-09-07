@@ -1,60 +1,27 @@
 using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Windows;
 using System.Windows.Interop;
 
 using Desknav.ControlPlane;
 
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
+using Windows.Win32.UI.HiDpi;
+using Windows.Win32.UI.WindowsAndMessaging;
+
 namespace Desknav.UI.Wpf;
-
-internal readonly record struct MonitorHandle
-    : IComparable<MonitorHandle>
-{
-    // HMONITOR is borrowed; Windows exposes no release operation.
-    private readonly nint _value;
-
-    internal MonitorHandle(nint value)
-    {
-        if (value == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(value));
-        }
-
-        _value = value;
-    }
-
-    internal nint ToNative() => _value;
-
-    public int CompareTo(MonitorHandle other) =>
-        _value.ToInt64().CompareTo(other._value.ToInt64());
-}
-
-internal readonly record struct WindowHandle
-{
-    // The WPF Window owns the HWND lifetime.
-    private readonly nint _value;
-
-    internal WindowHandle(nint value)
-    {
-        if (value == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(value));
-        }
-
-        _value = value;
-    }
-
-    internal nint ToNative() => _value;
-}
 
 internal readonly record struct PhysicalMonitor
 {
     internal PhysicalMonitor(
-        MonitorHandle handle,
+        HMONITOR handle,
         PhysicalRect bounds)
     {
-        if (handle == default)
+        if (handle.IsNull)
         {
             throw new ArgumentException(
                 "A monitor handle must be initialized.",
@@ -72,7 +39,7 @@ internal readonly record struct PhysicalMonitor
         Bounds = bounds;
     }
 
-    internal MonitorHandle Handle { get; }
+    internal HMONITOR Handle { get; }
 
     internal PhysicalRect Bounds { get; }
 }
@@ -106,7 +73,9 @@ internal sealed class PhysicalDesktop
 
         Monitors = monitors
             .OrderBy(static monitor => monitor.Bounds)
-            .ThenBy(static monitor => monitor.Handle)
+            .ThenBy(
+                static monitor =>
+                    ((nint)monitor.Handle).ToInt64())
             .ToImmutableArray();
     }
 
@@ -187,9 +156,9 @@ internal readonly record struct MonitorProjection
     }
 }
 
-internal static partial class MonitorTopology
+internal static unsafe class MonitorTopology
 {
-    private static readonly MonitorEnumerationCallback Callback =
+    private static readonly MONITORENUMPROC Callback =
         AddMonitor;
 
     internal static PhysicalDesktop GetCurrent() =>
@@ -201,12 +170,10 @@ internal static partial class MonitorTopology
         var stateHandle = GCHandle.Alloc(state);
         try
         {
-            var callback =
-                Marshal.GetFunctionPointerForDelegate(Callback);
-            if (!NativeMethods.EnumDisplayMonitors(
-                    0,
-                    0,
-                    callback,
+            if (!PInvoke.EnumDisplayMonitors(
+                    default,
+                    null,
+                    Callback,
                     GCHandle.ToIntPtr(stateHandle)))
             {
                 if (state.Failure is { } failure)
@@ -226,11 +193,11 @@ internal static partial class MonitorTopology
         return new PhysicalDesktop(state.Monitors.ToImmutable());
     }
 
-    private static bool AddMonitor(
-        nint monitor,
-        nint deviceContext,
-        ref NativeRectangle bounds,
-        nint statePointer)
+    private static BOOL AddMonitor(
+        HMONITOR monitor,
+        HDC deviceContext,
+        RECT* bounds,
+        LPARAM statePointer)
     {
         _ = deviceContext;
         try
@@ -241,12 +208,12 @@ internal static partial class MonitorTopology
                     "Monitor enumeration lost its capture state.");
             state.Monitors.Add(
                 new PhysicalMonitor(
-                    new MonitorHandle(monitor),
+                    monitor,
                     new PhysicalRect(
-                        bounds.Left,
-                        bounds.Top,
-                        checked(bounds.Right - bounds.Left),
-                        checked(bounds.Bottom - bounds.Top))));
+                        bounds->left,
+                        bounds->top,
+                        checked(bounds->right - bounds->left),
+                        checked(bounds->bottom - bounds->top))));
             return true;
         }
         catch (Exception exception)
@@ -262,14 +229,6 @@ internal static partial class MonitorTopology
         }
     }
 
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private delegate bool MonitorEnumerationCallback(
-        nint monitor,
-        nint deviceContext,
-        ref NativeRectangle bounds,
-        nint state);
-
     private sealed class MonitorEnumerationState
     {
         internal ImmutableArray<PhysicalMonitor>.Builder Monitors { get; } =
@@ -279,15 +238,21 @@ internal static partial class MonitorTopology
     }
 }
 
-internal delegate DpiScale WindowDpiReader(WindowHandle window);
+internal delegate DpiScale WindowDpiReader(HWND window);
 
 internal static class WindowDpi
 {
     private const double DefaultDpi = 96;
 
-    internal static DpiScale GetScale(WindowHandle window)
+    internal static DpiScale GetScale(HWND window)
     {
-        var dpi = NativeMethods.GetDpiForWindow(window.ToNative());
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 14393))
+        {
+            throw new PlatformNotSupportedException(
+                "Per-monitor overlay DPI requires Windows 10 version 1607.");
+        }
+
+        var dpi = PInvoke.GetDpiForWindow(window);
         return dpi == 0
             ? throw new InvalidOperationException(
                 "Windows could not determine the overlay window DPI.")
@@ -297,23 +262,23 @@ internal static class WindowDpi
 
 internal static class OverlayWindow
 {
-    internal static WindowHandle Position(
+    internal static HWND Position(
         Window window,
         PhysicalRect bounds) =>
         PerMonitorDpi.Run(
             () =>
             {
-                var handle = new WindowHandle(
-                    new WindowInteropHelper(window).EnsureHandle());
-                if (!NativeMethods.SetWindowPos(
-                        handle.ToNative(),
-                        0,
-                        (int)bounds.Left,
-                        (int)bounds.Top,
-                        (int)bounds.Width,
-                        (int)bounds.Height,
-                        SetWindowPositionFlags.NoActivate
-                            | SetWindowPositionFlags.NoZOrder))
+                var handle = (HWND)new WindowInteropHelper(window)
+                    .EnsureHandle();
+                if (!PInvoke.SetWindowPos(
+                        handle,
+                        default,
+                        bounds.Left,
+                        bounds.Top,
+                        bounds.Width,
+                        bounds.Height,
+                        SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE
+                            | SET_WINDOW_POS_FLAGS.SWP_NOZORDER))
                 {
                     throw new Win32Exception(
                         Marshal.GetLastPInvokeError());
@@ -322,18 +287,18 @@ internal static class OverlayWindow
                 return handle;
             });
 
-    internal static WindowHandle? GetHandle(Window window)
+    internal static HWND? GetHandle(Window window)
     {
         var value = new WindowInteropHelper(window).Handle;
-        return value == 0 ? null : new WindowHandle(value);
+        return value == 0 ? null : (HWND)value;
     }
 
-    internal static bool IsOpen(WindowHandle window) =>
-        NativeMethods.IsWindow(window.ToNative());
+    internal static bool IsOpen(HWND window) =>
+        PInvoke.IsWindow(window);
 
-    internal static void Destroy(WindowHandle window)
+    internal static void Destroy(HWND window)
     {
-        if (!NativeMethods.DestroyWindow(window.ToNative()))
+        if (!PInvoke.DestroyWindow(window))
         {
             throw new Win32Exception(Marshal.GetLastPInvokeError());
         }
@@ -342,14 +307,19 @@ internal static class OverlayWindow
 
 internal static class PerMonitorDpi
 {
-    private static readonly nint PerMonitorAwareV2 = new(-4);
-
     internal static T Run<T>(Func<T> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        var previous = NativeMethods.SetThreadDpiAwarenessContext(
-            PerMonitorAwareV2);
-        if (previous == 0)
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 14393))
+        {
+            throw new PlatformNotSupportedException(
+                "Per-monitor overlays require Windows 10 version 1607.");
+        }
+
+        var previous = PInvoke.SetThreadDpiAwarenessContext(
+            DPI_AWARENESS_CONTEXT
+                .DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        if (previous.IsNull)
         {
             throw new InvalidOperationException(
                 "Windows refused the overlay thread's per-monitor"
@@ -382,9 +352,13 @@ internal static class PerMonitorDpi
             : throw failure;
     }
 
-    private static Exception? Restore(nint previous)
+    [SupportedOSPlatform("windows10.0.14393")]
+    private static Exception? Restore(
+        DPI_AWARENESS_CONTEXT previous)
     {
-        if (NativeMethods.SetThreadDpiAwarenessContext(previous) != 0)
+        if (!PInvoke
+                .SetThreadDpiAwarenessContext(previous)
+                .IsNull)
         {
             return null;
         }
@@ -393,60 +367,4 @@ internal static class PerMonitorDpi
             "Windows failed to restore the overlay thread's"
             + " DPI awareness context.");
     }
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal struct NativeRectangle
-{
-    internal int Left;
-
-    internal int Top;
-
-    internal int Right;
-
-    internal int Bottom;
-}
-
-[Flags]
-internal enum SetWindowPositionFlags : uint
-{
-    NoZOrder = 0x0004,
-    NoActivate = 0x0010,
-}
-
-internal static partial class NativeMethods
-{
-    [LibraryImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool EnumDisplayMonitors(
-        nint deviceContext,
-        nint clipRectangle,
-        nint callback,
-        nint state);
-
-    [LibraryImport("user32.dll")]
-    internal static partial uint GetDpiForWindow(nint window);
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool IsWindow(nint window);
-
-    [LibraryImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool DestroyWindow(nint window);
-
-    [LibraryImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SetWindowPos(
-        nint window,
-        nint insertAfter,
-        int left,
-        int top,
-        int width,
-        int height,
-        SetWindowPositionFlags flags);
-
-    [LibraryImport("user32.dll")]
-    internal static partial nint SetThreadDpiAwarenessContext(
-        nint dpiContext);
 }

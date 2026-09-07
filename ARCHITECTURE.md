@@ -149,7 +149,10 @@ Framework-neutral overlay ownership and revision policy live in
 `Desknav.UI.Core`. `Desknav.UI.Wpf` owns the WPF dispatcher and creates one
 overlay window per physical monitor. Preparing a visible scene snapshots the
 monitor topology. Activating it replaces every monitor surface in one
-dispatcher operation.
+dispatcher operation. Dedicated physical geometry types remain distinct from
+WPF device-independent geometry until `MonitorProjection` converts a target
+into monitor-local coordinates. CsWin32 supplies the native Windows handles
+and API signatures at that boundary.
 Desknav UI's one-shot-action owner serializes explicitly requested point, UIA
 activation, or foreground coordinate-activation operations. Neither boundary
 captures the keyboard or owns the navigation workflow.

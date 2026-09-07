@@ -1,116 +1,61 @@
 namespace Desknav.ControlPlane;
 
-public readonly record struct PhysicalPixels
+/// <summary>
+/// A point in the global desktop coordinate space, measured in physical pixels.
+/// </summary>
+public readonly record struct PhysicalPoint(int X, int Y)
 {
-    private readonly long _value;
-
-    public PhysicalPixels(int value)
-    {
-        _value = value;
-    }
-
-    private PhysicalPixels(long value)
-    {
-        _value = value;
-    }
-
-    public static explicit operator int(PhysicalPixels value) =>
-        checked((int)value._value);
-
-    public static double operator /(
-        PhysicalPixels value,
-        double divisor) =>
-        value._value / divisor;
-
-    public static PhysicalPixels operator +(
-        PhysicalPixels left,
-        PhysicalPixels right) =>
-        new(left._value + right._value);
-
-    public static PhysicalPixels operator -(
-        PhysicalPixels left,
-        PhysicalPixels right) =>
-        new(left._value - right._value);
-
-    public static bool operator <(
-        PhysicalPixels left,
-        PhysicalPixels right) =>
-        left._value < right._value;
-
-    public static bool operator <=(
-        PhysicalPixels left,
-        PhysicalPixels right) =>
-        left._value <= right._value;
-
-    public static bool operator >(
-        PhysicalPixels left,
-        PhysicalPixels right) =>
-        left._value > right._value;
-
-    public static bool operator >=(
-        PhysicalPixels left,
-        PhysicalPixels right) =>
-        left._value >= right._value;
-
-    internal static PhysicalPixels Min(
-        PhysicalPixels left,
-        PhysicalPixels right) =>
-        left <= right ? left : right;
-
-    internal static PhysicalPixels Max(
-        PhysicalPixels left,
-        PhysicalPixels right) =>
-        left >= right ? left : right;
-
-    internal static long Area(
-        PhysicalPixels width,
-        PhysicalPixels height) =>
-        width._value * height._value;
-
-    internal int CompareTo(PhysicalPixels other) =>
-        _value.CompareTo(other._value);
-}
-
-public readonly record struct PhysicalPoint(
-    PhysicalPixels X,
-    PhysicalPixels Y)
-{
-    public PhysicalPoint(int x, int y)
-        : this(new PhysicalPixels(x), new PhysicalPixels(y))
-    {
-    }
-
-    public static PhysicalOffset operator -(
+    /// <summary>
+    /// Returns the origin-independent displacement from <paramref name="right"/>
+    /// to <paramref name="left"/>.
+    /// </summary>
+    public static PhysicalVector operator -(
         PhysicalPoint left,
         PhysicalPoint right) =>
-        new(left.X - right.X, left.Y - right.Y);
+        new(
+            (long)left.X - right.X,
+            (long)left.Y - right.Y);
 
+    /// <summary>
+    /// Clamps each coordinate to the corresponding minimum coordinate.
+    /// </summary>
     public PhysicalPoint ClampToMinimum(PhysicalPoint minimum) =>
         new(
-            PhysicalPixels.Max(X, minimum.X),
-            PhysicalPixels.Max(Y, minimum.Y));
+            Math.Max(X, minimum.X),
+            Math.Max(Y, minimum.Y));
 }
 
-public readonly record struct PhysicalOffset(
-    PhysicalPixels X,
-    PhysicalPixels Y);
+/// <summary>
+/// An origin-independent displacement measured in physical pixels.
+/// </summary>
+public readonly record struct PhysicalVector(long X, long Y);
 
+/// <summary>
+/// An origin-independent extent measured in physical pixels.
+/// </summary>
 public readonly record struct PhysicalSize
 {
+    /// <summary>
+    /// Creates a positive physical-pixel extent.
+    /// </summary>
     public PhysicalSize(int width, int height)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
 
-        Width = new PhysicalPixels(width);
-        Height = new PhysicalPixels(height);
+        Width = width;
+        Height = height;
     }
 
-    public PhysicalPixels Width { get; }
+    public int Width { get; }
 
-    public PhysicalPixels Height { get; }
+    public int Height { get; }
 }
 
+/// <summary>
+/// An axis-aligned rectangle in the global desktop coordinate space,
+/// measured in physical pixels.
+/// </summary>
 public readonly record struct PhysicalRect
     : IComparable<PhysicalRect>
 {
@@ -134,22 +79,32 @@ public readonly record struct PhysicalRect
         Size = size;
     }
 
+    /// <summary>
+    /// Gets the rectangle's top-left point in global desktop coordinates.
+    /// </summary>
     public PhysicalPoint Origin { get; }
 
+    /// <summary>
+    /// Gets the rectangle's origin-independent extent.
+    /// </summary>
     public PhysicalSize Size { get; }
 
-    public PhysicalPixels Left => Origin.X;
+    public int Left => Origin.X;
 
-    public PhysicalPixels Top => Origin.Y;
+    public int Top => Origin.Y;
 
-    public PhysicalPixels Width => Size.Width;
+    public int Width => Size.Width;
 
-    public PhysicalPixels Height => Size.Height;
+    public int Height => Size.Height;
 
-    private PhysicalPixels Right => Left + Width;
+    private long Right => (long)Left + Width;
 
-    private PhysicalPixels Bottom => Top + Height;
+    private long Bottom => (long)Top + Height;
 
+    /// <summary>
+    /// Determines whether this rectangle contains a global physical point.
+    /// The right and bottom edges are exclusive.
+    /// </summary>
     public bool Contains(PhysicalPoint point)
         =>
         point.X >= Left
@@ -157,17 +112,23 @@ public readonly record struct PhysicalRect
         && point.Y >= Top
         && point.Y < Bottom;
 
+    /// <summary>
+    /// Returns the overlapping area in square physical pixels.
+    /// </summary>
     public long IntersectionArea(PhysicalRect other)
     {
-        var left = PhysicalPixels.Max(Left, other.Left);
-        var top = PhysicalPixels.Max(Top, other.Top);
-        var right = PhysicalPixels.Min(Right, other.Right);
-        var bottom = PhysicalPixels.Min(Bottom, other.Bottom);
-        var width = PhysicalPixels.Max(default, right - left);
-        var height = PhysicalPixels.Max(default, bottom - top);
-        return PhysicalPixels.Area(width, height);
+        var left = Math.Max(Left, other.Left);
+        var top = Math.Max(Top, other.Top);
+        var right = Math.Min(Right, other.Right);
+        var bottom = Math.Min(Bottom, other.Bottom);
+        var width = Math.Max(0, right - left);
+        var height = Math.Max(0, bottom - top);
+        return width * height;
     }
 
+    /// <summary>
+    /// Orders rectangles by top, left, width, then height.
+    /// </summary>
     public int CompareTo(PhysicalRect other)
     {
         var top = Top.CompareTo(other.Top);

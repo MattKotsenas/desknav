@@ -7,6 +7,9 @@ using Akka.Actor;
 
 using Desknav.ControlPlane;
 
+using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
+
 namespace Desknav.UI.Wpf.Tests;
 
 public sealed class WpfOverlayRendererTests
@@ -15,7 +18,7 @@ public sealed class WpfOverlayRendererTests
         new(
             [
                 new PhysicalMonitor(
-                    new MonitorHandle(new nint(1)),
+                    (HMONITOR)new nint(1),
                     new PhysicalRect(
                         -1920,
                         -1080,
@@ -27,10 +30,10 @@ public sealed class WpfOverlayRendererTests
     public void PhysicalDesktopOwnsTargetsByTopLeftThenIntersection()
     {
         var left = new PhysicalMonitor(
-            new MonitorHandle(new nint(1)),
+            (HMONITOR)new nint(1),
             new PhysicalRect(-1920, 0, 1920, 1080));
         var right = new PhysicalMonitor(
-            new MonitorHandle(new nint(2)),
+            (HMONITOR)new nint(2),
             new PhysicalRect(0, 0, 2560, 1440));
         var desktop = new PhysicalDesktop([right, left]);
 
@@ -67,7 +70,7 @@ public sealed class WpfOverlayRendererTests
     [Fact]
     public void PhysicalDesktopRejectsDuplicateMonitorHandles()
     {
-        var handle = new MonitorHandle(new nint(1));
+        var handle = (HMONITOR)new nint(1);
 
         Assert.Throws<InvalidOperationException>(
             () => new PhysicalDesktop(
@@ -87,7 +90,7 @@ public sealed class WpfOverlayRendererTests
         var desktop = new PhysicalDesktop(
             [
                 new PhysicalMonitor(
-                    new MonitorHandle(new nint(1)),
+                    (HMONITOR)new nint(1),
                     new PhysicalRect(0, 0, 400, 300)),
             ]);
 
@@ -111,7 +114,7 @@ public sealed class WpfOverlayRendererTests
         Assert.Same(map, scene.Map);
         var monitor = Assert.Single(scene.Monitors);
         Assert.Equal(
-            new MonitorHandle(new nint(1)),
+            (HMONITOR)new nint(1),
             monitor.Monitor.Handle);
         Assert.Equal(map.Targets, monitor.Targets);
         Assert.Empty(
@@ -429,10 +432,10 @@ public sealed class WpfOverlayRendererTests
         var desktop = new PhysicalDesktop(
             [
                 new PhysicalMonitor(
-                    new MonitorHandle(new nint(1)),
+                    (HMONITOR)new nint(1),
                     new PhysicalRect(-1920, 0, 1920, 1080)),
                 new PhysicalMonitor(
-                    new MonitorHandle(new nint(2)),
+                    (HMONITOR)new nint(2),
                     new PhysicalRect(0, 0, 2560, 1440)),
             ]);
         var scales = new Queue<DpiScale>(
@@ -484,14 +487,16 @@ public sealed class WpfOverlayRendererTests
                             pair.Key,
                             Manifest: SceneManifest(view));
                     })
-                .OrderBy(static view => view.Key)
+                .OrderBy(
+                    static view =>
+                        ((nint)view.Key).ToInt64())
                 .ToArray());
         Assert.Collection(
             views,
             view =>
             {
                 Assert.Equal(
-                    new MonitorHandle(new nint(1)),
+                    (HMONITOR)new nint(1),
                     view.Key);
                 Assert.Equal(
                     [
@@ -503,7 +508,7 @@ public sealed class WpfOverlayRendererTests
             view =>
             {
                 Assert.Equal(
-                    new MonitorHandle(new nint(2)),
+                    (HMONITOR)new nint(2),
                     view.Key);
                 Assert.Equal(
                     [
@@ -524,7 +529,7 @@ public sealed class WpfOverlayRendererTests
     {
         await using var dispatcher = new WpfDispatcherThread();
         var desktop = TwoMonitorDesktop();
-        var stagedHandles = new List<WindowHandle>();
+        var stagedHandles = new List<HWND>();
         var failReplacement = false;
         var replacementDpiReads = 0;
         var renderer = new WpfOverlayRenderer(
@@ -593,7 +598,9 @@ public sealed class WpfOverlayRendererTests
 
         var hosts = await dispatcher.InvokeAsync(
             () => renderer.HostWindows
-                .OrderBy(static pair => pair.Key)
+                .OrderBy(
+                    static pair =>
+                        ((nint)pair.Key).ToInt64())
                 .Select(
                     static pair => (
                         pair.Key,
@@ -606,21 +613,21 @@ public sealed class WpfOverlayRendererTests
             host =>
             {
                 Assert.Equal(
-                    new MonitorHandle(new nint(1)),
+                    (HMONITOR)new nint(1),
                     host.Key);
                 Assert.True(host.IsVisible);
                 Assert.Equal(
-                    new MonitorHandle(new nint(1)),
+                    (HMONITOR)new nint(1),
                     host.View.Monitor.Handle);
             },
             host =>
             {
                 Assert.Equal(
-                    new MonitorHandle(new nint(2)),
+                    (HMONITOR)new nint(2),
                     host.Key);
                 Assert.True(host.IsVisible);
                 Assert.Equal(
-                    new MonitorHandle(new nint(2)),
+                    (HMONITOR)new nint(2),
                     host.View.Monitor.Handle);
             });
 
@@ -737,10 +744,10 @@ public sealed class WpfOverlayRendererTests
         new(
             [
                 new PhysicalMonitor(
-                    new MonitorHandle(new nint(1)),
+                    (HMONITOR)new nint(1),
                     new PhysicalRect(0, 0, 400, 300)),
                 new PhysicalMonitor(
-                    new MonitorHandle(new nint(2)),
+                    (HMONITOR)new nint(2),
                     new PhysicalRect(400, 0, 400, 300)),
             ]);
 

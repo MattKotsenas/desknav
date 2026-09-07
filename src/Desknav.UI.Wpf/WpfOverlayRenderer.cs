@@ -6,6 +6,9 @@ using System.Windows.Threading;
 
 using Desknav.ControlPlane;
 
+using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
+
 namespace Desknav.UI.Wpf;
 
 /// <summary>
@@ -20,8 +23,8 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
     private readonly Func<PhysicalDesktop> _getDesktop;
     private readonly WindowDpiReader _readDpi;
     // Cleanup-resistant HWNDs stay owned so release can retry them.
-    private readonly Dictionary<WindowHandle, Window> _retainedWindows = [];
-    private Dictionary<MonitorHandle, Window> _hostWindows = [];
+    private readonly Dictionary<HWND, Window> _retainedWindows = [];
+    private Dictionary<HMONITOR, Window> _hostWindows = [];
 
     public WpfOverlayRenderer(Dispatcher dispatcher)
         : this(
@@ -57,7 +60,7 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
         _readDpi = readDpi;
     }
 
-    internal IReadOnlyDictionary<MonitorHandle, Window> HostWindows =>
+    internal IReadOnlyDictionary<HMONITOR, Window> HostWindows =>
         _hostWindows;
 
     internal WpfPreparedScene? ActiveScene { get; private set; }
@@ -203,7 +206,7 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
 
     private void ActivateVisible(WpfVisibleScene scene)
     {
-        var replacements = new Dictionary<MonitorHandle, Window>();
+        var replacements = new Dictionary<HMONITOR, Window>();
         try
         {
             foreach (var monitor in scene.Monitors)

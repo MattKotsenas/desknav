@@ -78,8 +78,20 @@ public sealed class ValueObjectTests
     {
         var bounds = new PhysicalRect(-1920, -1080, 640, 480);
 
-        Assert.Equal(new PhysicalPixels(-1920), bounds.Left);
-        Assert.Equal(new PhysicalPixels(-1080), bounds.Top);
+        Assert.Equal(-1920, bounds.Left);
+        Assert.Equal(-1080, bounds.Top);
+    }
+
+    [Fact]
+    public void PhysicalPointDifferenceProducesVector()
+    {
+        var vector =
+            new PhysicalPoint(int.MaxValue, int.MaxValue)
+            - new PhysicalPoint(int.MinValue, int.MinValue);
+
+        Assert.Equal(
+            new PhysicalVector(uint.MaxValue, uint.MaxValue),
+            vector);
     }
 
     [Fact]
