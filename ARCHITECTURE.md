@@ -146,7 +146,13 @@ revision. The owner confirms the revision it makes active; completion of older
 render or cleanup work cannot replace newer desired state. Discovery
 generations advance past intervening presentation revisions.
 Framework-neutral overlay ownership and revision policy live in
-`Desknav.UI.Core`; `Desknav.UI.Wpf` owns the WPF dispatcher and overlay window.
+`Desknav.UI.Core`. `Desknav.UI.Wpf` owns the WPF dispatcher and creates one
+overlay window per physical monitor. Preparing a visible scene snapshots the
+monitor topology. Activating it replaces every monitor surface in one
+dispatcher operation. Dedicated physical geometry types remain distinct from
+WPF device-independent geometry until `MonitorProjection` converts a target
+into monitor-local coordinates. CsWin32 supplies the native Windows handles
+and API signatures at that boundary.
 Desknav UI's one-shot-action owner serializes explicitly requested point, UIA
 activation, or foreground coordinate-activation operations. Neither boundary
 captures the keyboard or owns the navigation workflow.
@@ -256,10 +262,13 @@ top, left, width, height, and target identity, then assigns fixed-length labels
 from the home-row-first `a s d f g h j k l q w e r t u i o p x c v b n m`
 alphabet. It allocates and owns the next presentation revision and sends that
 labeled target map to the overlay owner. An empty result ends discovery
-without presenting an empty scene. The WPF renderer translates each desktop
-target by the virtual desktop origin before placing its supplied label. After
-the overlay owner confirms that revision is rendered, label activation
-follows the
+without presenting an empty scene. A `PhysicalRect` keeps desktop target and
+monitor geometry in physical screen pixels. The physical desktop assigns each
+target to the monitor containing its top-left point, or to the monitor with
+the largest intersection when that point is off-screen. A monitor projection
+converts the target origin into local WPF coordinates using the DPI of that
+monitor's overlay window. After the overlay owner confirms that every monitor
+surface for that revision is rendered, label activation follows the
 [capture-safe input contract](#local-kanata-actor). A stale scene must never
 select from a newer one.
 

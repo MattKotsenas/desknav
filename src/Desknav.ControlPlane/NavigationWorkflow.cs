@@ -305,10 +305,7 @@ internal static class TargetLabelAllocator
     public static TargetMap Create(TargetSnapshot snapshot)
     {
         var orderedTargets = snapshot.Targets
-            .OrderBy(static target => target.Bounds.Top)
-            .ThenBy(static target => target.Bounds.Left)
-            .ThenBy(static target => target.Bounds.Width)
-            .ThenBy(static target => target.Bounds.Height)
+            .OrderBy(static target => target.Bounds)
             .ThenBy(static target => target.Id.Value)
             .ToArray();
         var length = RequiredLabelLength(orderedTargets.Length);

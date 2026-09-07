@@ -52,9 +52,8 @@ change through any channel.
 Implement the target-selection workflow defined in
 [ARCHITECTURE.md](ARCHITECTURE.md) with live target discovery, overlay
 presentation, and point, UIA activation, or coordinate-activation operations.
-Connect the read-only UI Automation scanner to presentation after the overlay
-owns the mixed-DPI coordinate contract required by its physical-pixel
-captures.
+Connect the read-only UI Automation scanner to presentation by mapping its
+eligible physical-pixel captures into desktop targets.
 
 Done when Windows acceptance proves point without activation, explicit
 activation, cancellation after targets appear, focus change before the

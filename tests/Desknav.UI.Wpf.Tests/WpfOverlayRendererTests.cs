@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -6,15 +7,100 @@ using Akka.Actor;
 
 using Desknav.ControlPlane;
 
+using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
+
 namespace Desknav.UI.Wpf.Tests;
 
 public sealed class WpfOverlayRendererTests
 {
-    private static readonly VirtualDesktopBounds TestDesktop =
-        new(-1920, -1080, 3840, 2160);
+    private static readonly PhysicalDesktop TestDesktop =
+        new(
+            [
+                new PhysicalMonitor(
+                    (HMONITOR)new nint(1),
+                    new PhysicalRect(
+                        -1920,
+                        -1080,
+                        3840,
+                        2160)),
+            ]);
 
     [Fact]
-    public async Task VisiblePreparationCreatesDispatcherOwnedScene()
+    public void PhysicalDesktopOwnsTargetsByTopLeftThenIntersection()
+    {
+        var left = new PhysicalMonitor(
+            (HMONITOR)new nint(1),
+            new PhysicalRect(-1920, 0, 1920, 1080));
+        var right = new PhysicalMonitor(
+            (HMONITOR)new nint(2),
+            new PhysicalRect(0, 0, 2560, 1440));
+        var desktop = new PhysicalDesktop([right, left]);
+
+        Assert.Equal(
+            left,
+            desktop.FindMonitor(
+                new PhysicalRect(-100, 600, 300, 200)));
+        Assert.Equal(
+            right,
+            desktop.FindMonitor(
+                new PhysicalRect(-200, -100, 500, 300)));
+    }
+
+    [Fact]
+    public void MonitorProjectionConvertsPhysicalRectsToLocalDips()
+    {
+        var projection = new MonitorProjection(
+            new PhysicalRect(0, 0, 2560, 1440),
+            new DpiScale(1.5, 1.5));
+
+        Assert.Equal(
+            new Size(2560d / 1.5, 1440d / 1.5),
+            projection.Size);
+        Assert.Equal(
+            new Point(100, 200),
+            projection.Project(
+                new PhysicalPoint(150, 300)));
+        Assert.Equal(
+            new Point(),
+            projection.Project(
+                new PhysicalPoint(-200, -100)));
+    }
+
+    [Fact]
+    public void PhysicalDesktopRejectsDuplicateMonitorHandles()
+    {
+        var handle = (HMONITOR)new nint(1);
+
+        Assert.Throws<InvalidOperationException>(
+            () => new PhysicalDesktop(
+                [
+                    new PhysicalMonitor(
+                        handle,
+                        new PhysicalRect(0, 0, 400, 300)),
+                    new PhysicalMonitor(
+                        handle,
+                        new PhysicalRect(400, 0, 400, 300)),
+                ]));
+    }
+
+    [Fact]
+    public void PhysicalDesktopRejectsTargetsOutsideEveryMonitor()
+    {
+        var desktop = new PhysicalDesktop(
+            [
+                new PhysicalMonitor(
+                    (HMONITOR)new nint(1),
+                    new PhysicalRect(0, 0, 400, 300)),
+            ]);
+
+        Assert.Throws<InvalidOperationException>(
+            () => desktop.FindMonitor(
+                new PhysicalRect(500, 500, 100, 100)));
+    }
+
+    [Fact]
+    public async Task VisiblePreparationSnapshotsMonitorAssignments()
     {
         await using var dispatcher = new WpfDispatcherThread();
         var renderer = Renderer(dispatcher.Dispatcher);
@@ -25,10 +111,14 @@ public sealed class WpfOverlayRendererTests
                 () => renderer.PrepareAsync(
                     new TargetPresentation.Visible(map),
                     CancellationToken.None)));
-        Assert.Same(map, scene.View.Map);
-        Assert.Same(dispatcher.Dispatcher, scene.View.Dispatcher);
-        Assert.Null(
-            await dispatcher.InvokeAsync(() => renderer.HostWindow));
+        Assert.Same(map, scene.Map);
+        var monitor = Assert.Single(scene.Monitors);
+        Assert.Equal(
+            (HMONITOR)new nint(1),
+            monitor.Monitor.Handle);
+        Assert.Equal(map.Targets, monitor.Targets);
+        Assert.Empty(
+            await dispatcher.InvokeAsync(() => renderer.HostWindows));
 
         await scene.DisposeAsync();
     }
@@ -44,8 +134,8 @@ public sealed class WpfOverlayRendererTests
             CancellationToken.None);
 
         Assert.IsType<WpfHiddenScene>(scene);
-        Assert.Null(
-            await dispatcher.InvokeAsync(() => renderer.HostWindow));
+        Assert.Empty(
+            await dispatcher.InvokeAsync(() => renderer.HostWindows));
 
         await scene.DisposeAsync();
     }
@@ -91,12 +181,16 @@ public sealed class WpfOverlayRendererTests
         await renderer.ActivateAsync(visible);
 
         var visibleState = await dispatcher.InvokeAsync(
-            () => (
-                renderer.HostWindow?.IsVisible,
-                renderer.HostWindow?.Content,
-                renderer.ActiveScene));
+            () =>
+            {
+                var host = Assert.Single(renderer.HostWindows).Value;
+                return (
+                    host.IsVisible,
+                    host.Content,
+                    renderer.ActiveScene);
+            });
         Assert.True(visibleState.IsVisible);
-        Assert.Same(visible.View, visibleState.Content);
+        Assert.IsType<TargetScene>(visibleState.Content);
         Assert.Same(visible, visibleState.ActiveScene);
 
         var hidden = Assert.IsType<WpfHiddenScene>(
@@ -106,10 +200,14 @@ public sealed class WpfOverlayRendererTests
         await renderer.ActivateAsync(hidden);
 
         var hiddenState = await dispatcher.InvokeAsync(
-            () => (
-                renderer.HostWindow?.IsVisible,
-                renderer.HostWindow?.Content,
-                renderer.ActiveScene));
+            () =>
+            {
+                var host = Assert.Single(renderer.HostWindows).Value;
+                return (
+                    host.IsVisible,
+                    host.Content,
+                    renderer.ActiveScene);
+            });
         Assert.False(hiddenState.IsVisible);
         Assert.Null(hiddenState.Content);
         Assert.Same(hidden, hiddenState.ActiveScene);
@@ -191,19 +289,23 @@ public sealed class WpfOverlayRendererTests
         await superseded.DisposeAsync();
 
         var state = await dispatcher.InvokeAsync(
-            () => (
-                renderer.HostWindow?.IsVisible,
-                renderer.HostWindow?.Content,
-                renderer.ActiveScene));
+            () =>
+            {
+                var host = Assert.Single(renderer.HostWindows).Value;
+                return (
+                    host.IsVisible,
+                    host.Content,
+                    renderer.ActiveScene);
+            });
         Assert.True(state.IsVisible);
-        Assert.Same(active.View, state.Content);
+        Assert.IsType<TargetScene>(state.Content);
         Assert.Same(active, state.ActiveScene);
 
         await active.DisposeAsync();
     }
 
     [Fact]
-    public async Task DisposingActiveSceneClosesHostWindow()
+    public async Task DisposingActiveSceneClosesHostWindows()
     {
         await using var dispatcher = new WpfDispatcherThread();
         var renderer = Renderer(dispatcher.Dispatcher);
@@ -214,8 +316,8 @@ public sealed class WpfOverlayRendererTests
 
         await active.DisposeAsync();
 
-        Assert.Null(
-            await dispatcher.InvokeAsync(() => renderer.HostWindow));
+        Assert.Empty(
+            await dispatcher.InvokeAsync(() => renderer.HostWindows));
         Assert.Null(
             await dispatcher.InvokeAsync(() => renderer.ActiveScene));
     }
@@ -268,7 +370,10 @@ public sealed class WpfOverlayRendererTests
                 (await applied.Task.WaitAsync(timeout.Token)).Revision);
             Assert.True(
                 await dispatcher.InvokeAsync(
-                    () => renderer.HostWindow?.IsVisible));
+                    () => Assert
+                        .Single(renderer.HostWindows)
+                        .Value
+                        .IsVisible));
 
             Assert.True(
                 await overlay.GracefulStop(
@@ -282,16 +387,16 @@ public sealed class WpfOverlayRendererTests
     }
 
     [Fact]
-    public async Task VisibleSceneManifestUsesSuppliedLabelsAndVirtualOrigin()
+    public async Task VisibleSceneManifestUsesSuppliedLabelsAndMonitorOrigin()
     {
         await using var dispatcher = new WpfDispatcherThread();
         var renderer = Renderer(dispatcher.Dispatcher);
         var first = new DesktopTarget(
             TargetId.Parse("00000000-0000-0000-0000-000000000001"),
-            new TargetBounds(-1000, -500, 300, 200));
+            new PhysicalRect(-1000, -500, 300, 200));
         var second = new DesktopTarget(
             TargetId.Parse("00000000-0000-0000-0000-000000000002"),
-            new TargetBounds(100, 200, 400, 300));
+            new PhysicalRect(100, 200, 400, 300));
         var map = new TargetMap(
             TargetDiscoveryRequestId.New(),
             [
@@ -302,9 +407,14 @@ public sealed class WpfOverlayRendererTests
             await renderer.PrepareAsync(
                 new TargetPresentation.Visible(map),
                 TestContext.Current.CancellationToken));
+        await renderer.ActivateAsync(scene);
 
         var manifest = await dispatcher.InvokeAsync(
-            () => SceneManifest(scene.View));
+            () => SceneManifest(
+                Assert.IsType<TargetScene>(
+                    Assert.Single(renderer.HostWindows)
+                        .Value
+                        .Content)));
 
         Assert.Equal(
             [
@@ -315,8 +425,331 @@ public sealed class WpfOverlayRendererTests
         await scene.DisposeAsync();
     }
 
+    [Fact]
+    public async Task VisibleSceneProjectsTargetsIntoMonitorLocalDips()
+    {
+        await using var dispatcher = new WpfDispatcherThread();
+        var desktop = new PhysicalDesktop(
+            [
+                new PhysicalMonitor(
+                    (HMONITOR)new nint(1),
+                    new PhysicalRect(-1920, 0, 1920, 1080)),
+                new PhysicalMonitor(
+                    (HMONITOR)new nint(2),
+                    new PhysicalRect(0, 0, 2560, 1440)),
+            ]);
+        var scales = new Queue<DpiScale>(
+            [
+                new DpiScale(1, 1),
+                new DpiScale(1.5, 1.5),
+            ]);
+        var renderer = new WpfOverlayRenderer(
+            dispatcher.Dispatcher,
+            desktop,
+            _ => scales.Dequeue());
+        var left = new DesktopTarget(
+            TargetId.Parse("00000000-0000-0000-0000-000000000001"),
+            new PhysicalRect(-1000, 300, 300, 200));
+        var right = new DesktopTarget(
+            TargetId.Parse("00000000-0000-0000-0000-000000000002"),
+            new PhysicalRect(150, 300, 400, 300));
+        var crossing = new DesktopTarget(
+            TargetId.Parse("00000000-0000-0000-0000-000000000003"),
+            new PhysicalRect(-100, 600, 300, 200));
+        var largestIntersection = new DesktopTarget(
+            TargetId.Parse("00000000-0000-0000-0000-000000000004"),
+            new PhysicalRect(-200, -100, 500, 300));
+        var map = new TargetMap(
+            TargetDiscoveryRequestId.New(),
+            [
+                new LabeledTarget(TargetLabel.From("f"), left),
+                new LabeledTarget(TargetLabel.From("d"), right),
+                new LabeledTarget(TargetLabel.From("s"), crossing),
+                new LabeledTarget(
+                    TargetLabel.From("a"),
+                    largestIntersection),
+            ]);
+
+        var scene = Assert.IsType<WpfVisibleScene>(
+            await renderer.PrepareAsync(
+                new TargetPresentation.Visible(map),
+                TestContext.Current.CancellationToken));
+        await renderer.ActivateAsync(scene);
+
+        var views = await dispatcher.InvokeAsync(
+            () => renderer.HostWindows
+                .Select(
+                    pair =>
+                    {
+                        var view = Assert.IsType<TargetScene>(
+                            pair.Value.Content);
+                        return (
+                            pair.Key,
+                            Manifest: SceneManifest(view));
+                    })
+                .OrderBy(
+                    static view =>
+                        ((nint)view.Key).ToInt64())
+                .ToArray());
+        Assert.Collection(
+            views,
+            view =>
+            {
+                Assert.Equal(
+                    (HMONITOR)new nint(1),
+                    view.Key);
+                Assert.Equal(
+                    [
+                        new RenderedBadge(left.Id, "f", 920, 300),
+                        new RenderedBadge(crossing.Id, "s", 1820, 600),
+                    ],
+                    view.Manifest);
+            },
+            view =>
+            {
+                Assert.Equal(
+                    (HMONITOR)new nint(2),
+                    view.Key);
+                Assert.Equal(
+                    [
+                        new RenderedBadge(right.Id, "d", 100, 200),
+                        new RenderedBadge(
+                            largestIntersection.Id,
+                            "a",
+                            0,
+                            0),
+                    ],
+                    view.Manifest);
+            });
+        await scene.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task FailedReplacementPreservesActiveWindowsAndClosesStagedOnes()
+    {
+        await using var dispatcher = new WpfDispatcherThread();
+        var desktop = TwoMonitorDesktop();
+        var stagedHandles = new List<HWND>();
+        var failReplacement = false;
+        var replacementDpiReads = 0;
+        var renderer = new WpfOverlayRenderer(
+            dispatcher.Dispatcher,
+            desktop,
+            window =>
+            {
+                if (failReplacement)
+                {
+                    stagedHandles.Add(window);
+                    replacementDpiReads++;
+                }
+
+                return replacementDpiReads == 2
+                    ? throw new InvalidOperationException(
+                        "DPI lookup failed.")
+                    : new DpiScale(1, 1);
+            });
+        var first = Assert.IsType<WpfVisibleScene>(
+            await renderer.PrepareAsync(
+                new TargetPresentation.Visible(Map()),
+                TestContext.Current.CancellationToken));
+        await renderer.ActivateAsync(first);
+        var originalWindows = await dispatcher.InvokeAsync(
+            () => renderer.HostWindows.ToDictionary());
+        var replacement = Assert.IsType<WpfVisibleScene>(
+            await renderer.PrepareAsync(
+                new TargetPresentation.Visible(Map()),
+                TestContext.Current.CancellationToken));
+        failReplacement = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => renderer.ActivateAsync(replacement));
+
+        var remaining = await dispatcher.InvokeAsync(
+            () => renderer.HostWindows.ToDictionary());
+        Assert.Equal(originalWindows.Keys, remaining.Keys);
+        Assert.All(
+            originalWindows,
+            pair => Assert.Same(pair.Value, remaining[pair.Key]));
+        Assert.Same(first, renderer.ActiveScene);
+        Assert.Equal(2, replacementDpiReads);
+        Assert.All(
+            stagedHandles,
+            static handle => Assert.False(
+                OverlayWindow.IsOpen(handle)));
+
+        await replacement.DisposeAsync();
+        await first.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ActivationOwnsOneHostWindowPerMonitor()
+    {
+        await using var dispatcher = new WpfDispatcherThread();
+        var renderer = new WpfOverlayRenderer(
+            dispatcher.Dispatcher,
+            TwoMonitorDesktop(),
+            static _ => new DpiScale(1, 1));
+        var scene = Assert.IsType<WpfVisibleScene>(
+            await renderer.PrepareAsync(
+                new TargetPresentation.Visible(Map()),
+                TestContext.Current.CancellationToken));
+
+        await renderer.ActivateAsync(scene);
+
+        var hosts = await dispatcher.InvokeAsync(
+            () => renderer.HostWindows
+                .OrderBy(
+                    static pair =>
+                        ((nint)pair.Key).ToInt64())
+                .Select(
+                    static pair => (
+                        pair.Key,
+                        pair.Value.IsVisible,
+                        View: Assert.IsType<TargetScene>(
+                            pair.Value.Content)))
+                .ToArray());
+        Assert.Collection(
+            hosts,
+            host =>
+            {
+                Assert.Equal(
+                    (HMONITOR)new nint(1),
+                    host.Key);
+                Assert.True(host.IsVisible);
+                Assert.Equal(
+                    (HMONITOR)new nint(1),
+                    host.View.Monitor.Handle);
+            },
+            host =>
+            {
+                Assert.Equal(
+                    (HMONITOR)new nint(2),
+                    host.Key);
+                Assert.True(host.IsVisible);
+                Assert.Equal(
+                    (HMONITOR)new nint(2),
+                    host.View.Monitor.Handle);
+            });
+
+        await scene.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ActivationCompletionCoversEveryMonitorSurface()
+    {
+        await using var dispatcher = new WpfDispatcherThread();
+        var renderer = new WpfOverlayRenderer(
+            dispatcher.Dispatcher,
+            TwoMonitorDesktop(),
+            static _ => new DpiScale(1, 1));
+        var first = Assert.IsType<WpfVisibleScene>(
+            await renderer.PrepareAsync(
+                new TargetPresentation.Visible(Map()),
+                TestContext.Current.CancellationToken));
+        var second = Assert.IsType<WpfVisibleScene>(
+            await renderer.PrepareAsync(
+                new TargetPresentation.Visible(Map()),
+                TestContext.Current.CancellationToken));
+        await renderer.ActivateAsync(first);
+        var firstViews = await dispatcher.InvokeAsync(
+            () => renderer.HostWindows
+                .ToDictionary(
+                    static pair => pair.Key,
+                    static pair => pair.Value.Content));
+
+        await renderer.ActivateAsync(second);
+
+        var active = await dispatcher.InvokeAsync(
+            () =>
+            {
+                var views = renderer.HostWindows.ToDictionary(
+                    static pair => pair.Key,
+                    static pair =>
+                        Assert.IsType<TargetScene>(
+                            pair.Value.Content));
+                var targetIds = views.Values
+                    .SelectMany(SceneManifest)
+                    .Select(static badge => badge.TargetId)
+                    .ToArray();
+                return (Views: views, TargetIds: targetIds);
+            });
+        Assert.All(
+            active.Views,
+            pair => Assert.NotSame(
+                firstViews[pair.Key],
+                pair.Value));
+        Assert.Equal(
+            second.Map.Targets
+                .Select(static target => target.Target.Id),
+            active.TargetIds);
+        Assert.Same(second, renderer.ActiveScene);
+
+        await first.DisposeAsync();
+        await second.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DefaultRendererActivatesEveryCurrentMonitor()
+    {
+        await using var dispatcher = new WpfDispatcherThread();
+        var desktop = await dispatcher.InvokeAsync(
+            MonitorTopology.GetCurrent);
+        var first = desktop.Monitors[0];
+        var map = new TargetMap(
+            TargetDiscoveryRequestId.New(),
+            [
+                new LabeledTarget(
+                    TargetLabel.From("f"),
+                    new DesktopTarget(
+                        TargetId.New(),
+                        first.Bounds)),
+            ]);
+        var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
+        var scene = Assert.IsType<WpfVisibleScene>(
+            await renderer.PrepareAsync(
+                new TargetPresentation.Visible(map),
+                TestContext.Current.CancellationToken));
+
+        await renderer.ActivateAsync(scene);
+
+        var active = await dispatcher.InvokeAsync(
+            () => renderer.HostWindows
+                .Values
+                .Select(
+                    static host =>
+                        Assert.IsType<TargetScene>(host.Content))
+                .ToArray());
+        Assert.Equal(scene.Monitors.Length, active.Length);
+        Assert.All(
+            active,
+            static view =>
+            {
+                Assert.NotEqual(default, view.Monitor.Handle);
+                Assert.True(
+                    view.Projection.Scale.DpiScaleX > 0);
+                Assert.True(
+                    view.Projection.Scale.DpiScaleY > 0);
+            });
+
+        await scene.DisposeAsync();
+    }
+
     private static WpfOverlayRenderer Renderer(Dispatcher dispatcher) =>
-        new(dispatcher, TestDesktop);
+        new(
+            dispatcher,
+            TestDesktop,
+            static _ => new DpiScale(1, 1));
+
+    private static PhysicalDesktop TwoMonitorDesktop() =>
+        new(
+            [
+                new PhysicalMonitor(
+                    (HMONITOR)new nint(1),
+                    new PhysicalRect(0, 0, 400, 300)),
+                new PhysicalMonitor(
+                    (HMONITOR)new nint(2),
+                    new PhysicalRect(400, 0, 400, 300)),
+            ]);
 
     private static TargetMap Map() =>
         new(
@@ -326,7 +759,7 @@ public sealed class WpfOverlayRendererTests
                     TargetLabel.From("f"),
                     new DesktopTarget(
                         TargetId.New(),
-                        new TargetBounds(100, 200, 800, 600))),
+                        new PhysicalRect(100, 200, 800, 600))),
             ]);
 
     private static RenderedBadge[] SceneManifest(TargetScene scene)

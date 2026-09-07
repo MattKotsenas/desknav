@@ -62,24 +62,55 @@ public sealed class ValueObjectTests
     [InlineData(-1, 1, "width")]
     [InlineData(1, 0, "height")]
     [InlineData(1, -1, "height")]
-    public void TargetBoundsRequiresPositiveSize(
+    public void PhysicalRectRequiresPositiveSize(
         int width,
         int height,
         string parameterName)
     {
         var exception = Assert.Throws<ArgumentOutOfRangeException>(
-            () => new TargetBounds(0, 0, width, height));
+            () => new PhysicalRect(0, 0, width, height));
 
         Assert.Equal(parameterName, exception.ParamName);
     }
 
     [Fact]
-    public void TargetBoundsAllowsNegativeVirtualDesktopCoordinates()
+    public void PhysicalRectAllowsNegativeVirtualDesktopCoordinates()
     {
-        var bounds = new TargetBounds(-1920, -1080, 640, 480);
+        var bounds = new PhysicalRect(-1920, -1080, 640, 480);
 
         Assert.Equal(-1920, bounds.Left);
         Assert.Equal(-1080, bounds.Top);
+    }
+
+    [Fact]
+    public void PhysicalPointDifferenceProducesVector()
+    {
+        var vector =
+            new PhysicalPoint(int.MaxValue, int.MaxValue)
+            - new PhysicalPoint(int.MinValue, int.MinValue);
+
+        Assert.Equal(
+            new PhysicalVector(uint.MaxValue, uint.MaxValue),
+            vector);
+    }
+
+    [Fact]
+    public void PhysicalRectHandlesExtremeScreenCoordinates()
+    {
+        var left = new PhysicalRect(
+            int.MinValue,
+            int.MinValue,
+            int.MaxValue,
+            int.MaxValue);
+        var overlapping = new PhysicalRect(
+            -2,
+            -2,
+            int.MaxValue,
+            int.MaxValue);
+
+        Assert.True(left.Contains(new PhysicalPoint(-2, -2)));
+        Assert.False(left.Contains(new PhysicalPoint(-1, -1)));
+        Assert.Equal(1, left.IntersectionArea(overlapping));
     }
 
     [Fact]
@@ -110,10 +141,10 @@ public sealed class ValueObjectTests
         {
             new DesktopTarget(
                 TargetId.New(),
-                new TargetBounds(0, 0, 100, 100)),
+                new PhysicalRect(0, 0, 100, 100)),
             new DesktopTarget(
                 TargetId.New(),
-                new TargetBounds(100, 0, 100, 100)),
+                new PhysicalRect(100, 0, 100, 100)),
         };
 
         var exception = Assert.Throws<ArgumentException>(

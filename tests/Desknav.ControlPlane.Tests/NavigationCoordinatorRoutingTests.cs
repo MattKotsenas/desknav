@@ -179,5 +179,5 @@ public sealed class NavigationCoordinatorRoutingTests
     private static DesktopTarget Target() =>
         new(
             TargetId.New(),
-            new TargetBounds(100, 200, 800, 600));
+            new PhysicalRect(100, 200, 800, 600));
 }

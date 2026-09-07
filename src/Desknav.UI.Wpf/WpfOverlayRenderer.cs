@@ -1,9 +1,13 @@
+using System.Collections.Immutable;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 
 using Desknav.ControlPlane;
+
+using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
 
 namespace Desknav.UI.Wpf;
 
@@ -12,26 +16,52 @@ namespace Desknav.UI.Wpf;
 /// </summary>
 public sealed class WpfOverlayRenderer : IOverlayRenderer
 {
+    private const string CloseFailureMessage =
+        "One or more overlay windows failed to close.";
+
     private readonly Dispatcher _dispatcher;
-    private readonly VirtualDesktopBounds _desktopBounds;
+    private readonly Func<PhysicalDesktop> _getDesktop;
+    private readonly WindowDpiReader _readDpi;
+    // Cleanup-resistant HWNDs stay owned so release can retry them.
+    private readonly Dictionary<HWND, Window> _retainedWindows = [];
+    private Dictionary<HMONITOR, Window> _hostWindows = [];
 
-    public WpfOverlayRenderer(
-        Dispatcher dispatcher,
-        VirtualDesktopBounds desktopBounds)
+    public WpfOverlayRenderer(Dispatcher dispatcher)
+        : this(
+            dispatcher,
+            MonitorTopology.GetCurrent,
+            WindowDpi.GetScale)
     {
-        ArgumentNullException.ThrowIfNull(dispatcher);
-        if (desktopBounds == default)
-        {
-            throw new ArgumentException(
-                "Virtual desktop bounds must be initialized.",
-                nameof(desktopBounds));
-        }
-
-        _dispatcher = dispatcher;
-        _desktopBounds = desktopBounds;
     }
 
-    internal Window? HostWindow { get; private set; }
+    internal WpfOverlayRenderer(
+        Dispatcher dispatcher,
+        PhysicalDesktop desktop,
+        WindowDpiReader readDpi)
+        : this(
+            dispatcher,
+            () => desktop,
+            readDpi)
+    {
+        ArgumentNullException.ThrowIfNull(desktop);
+    }
+
+    private WpfOverlayRenderer(
+        Dispatcher dispatcher,
+        Func<PhysicalDesktop> getDesktop,
+        WindowDpiReader readDpi)
+    {
+        ArgumentNullException.ThrowIfNull(dispatcher);
+        ArgumentNullException.ThrowIfNull(getDesktop);
+        ArgumentNullException.ThrowIfNull(readDpi);
+
+        _dispatcher = dispatcher;
+        _getDesktop = getDesktop;
+        _readDpi = readDpi;
+    }
+
+    internal IReadOnlyDictionary<HMONITOR, Window> HostWindows =>
+        _hostWindows;
 
     internal WpfPreparedScene? ActiveScene { get; private set; }
 
@@ -62,19 +92,15 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
                     switch (prepared)
                     {
                         case WpfVisibleScene visible:
-                            var window = HostWindow ??= CreateWindow();
-                            window.Content = visible.View;
-                            if (!window.IsVisible)
-                            {
-                                window.Show();
-                            }
+                            ActivateVisible(visible);
                             break;
                         case WpfHiddenScene:
-                            if (HostWindow is { } host)
+                            foreach (var host in _hostWindows.Values)
                             {
                                 host.Content = null;
                                 host.Hide();
                             }
+                            ActiveScene = prepared;
                             break;
                         default:
                             throw new ArgumentOutOfRangeException(
@@ -82,8 +108,6 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
                                 scene,
                                 "Unknown WPF overlay scene.");
                     }
-
-                    ActiveScene = prepared;
                 })
             .ConfigureAwait(false);
         await _dispatcher
@@ -105,15 +129,19 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
             InvokeAsync(
                 () =>
                 {
+                    List<Exception>? failures = null;
+                    CloseOwnedWindows(_retainedWindows, ref failures);
                     if (ReferenceEquals(ActiveScene, scene))
                     {
+                        CloseOwnedWindows(_hostWindows, ref failures);
                         ActiveScene = null;
-                        if (HostWindow is { } host)
-                        {
-                            host.Content = null;
-                            host.Close();
-                            HostWindow = null;
-                        }
+                    }
+
+                    if (failures is not null)
+                    {
+                        throw new AggregateException(
+                            CloseFailureMessage,
+                            failures);
                     }
                 }));
     }
@@ -124,7 +152,10 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
             TargetPresentation.Visible visible =>
                 new WpfVisibleScene(
                     this,
-                    new TargetScene(visible.Map, _desktopBounds)),
+                    visible.Map,
+                    CreateMonitorScenes(
+                        visible.Map,
+                        _getDesktop())),
             TargetPresentation.Hidden => new WpfHiddenScene(this),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(presentation),
@@ -173,73 +204,174 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
         }
     }
 
-    private Window CreateWindow() =>
+    private void ActivateVisible(WpfVisibleScene scene)
+    {
+        var replacements = new Dictionary<HMONITOR, Window>();
+        try
+        {
+            foreach (var monitor in scene.Monitors)
+            {
+                var host = CreateWindow();
+                replacements.Add(monitor.Monitor.Handle, host);
+                var windowHandle = OverlayWindow.Position(
+                    host,
+                    monitor.Monitor.Bounds);
+                var projection = new MonitorProjection(
+                    monitor.Monitor.Bounds,
+                    _readDpi(windowHandle));
+                host.Content = new TargetScene(
+                    monitor.Monitor,
+                    projection,
+                    monitor.Targets);
+            }
+
+            foreach (var host in replacements.Values)
+            {
+                host.Show();
+            }
+        }
+        catch (Exception activationFailure)
+        {
+            try
+            {
+                CloseWindows(replacements.Values);
+            }
+            catch (Exception cleanupFailure)
+            {
+                RetainWindows(replacements.Values);
+                throw new AggregateException(
+                    "Overlay activation and staged-window cleanup failed.",
+                    activationFailure,
+                    cleanupFailure);
+            }
+
+            throw;
+        }
+
+        var replaced = _hostWindows;
+        _hostWindows = replacements;
+        ActiveScene = scene;
+        try
+        {
+            CloseWindows(replaced.Values);
+        }
+        catch
+        {
+            RetainWindows(replaced.Values);
+            throw;
+        }
+    }
+
+    private static ImmutableArray<MonitorScene> CreateMonitorScenes(
+        TargetMap map,
+        PhysicalDesktop desktop)
+    {
+        var targets = desktop.Monitors.ToDictionary(
+            static monitor => monitor.Handle,
+            static _ => ImmutableArray.CreateBuilder<LabeledTarget>());
+
+        foreach (var target in map.Targets)
+        {
+            var monitor = desktop.FindMonitor(target.Target.Bounds);
+            targets[monitor.Handle].Add(target);
+        }
+
+        return desktop.Monitors
+            .Select(
+                monitor =>
+                    new MonitorScene(
+                        monitor,
+                        targets[monitor.Handle].ToImmutable()))
+            .ToImmutableArray();
+    }
+
+    private void RetainWindows(IEnumerable<Window> windows)
+    {
+        foreach (var window in windows)
+        {
+            if (OverlayWindow.GetHandle(window) is { } handle
+                && OverlayWindow.IsOpen(handle))
+            {
+                _retainedWindows[handle] = window;
+            }
+        }
+    }
+
+    private static void CloseWindows(IEnumerable<Window> windows)
+    {
+        List<Exception>? failures = null;
+        foreach (var window in windows)
+        {
+            CloseWindow(window, ref failures);
+        }
+
+        if (failures is not null)
+        {
+            throw new AggregateException(
+                CloseFailureMessage,
+                failures);
+        }
+    }
+
+    private static void CloseOwnedWindows<TKey>(
+        IDictionary<TKey, Window> windows,
+        ref List<Exception>? failures)
+        where TKey : notnull
+    {
+        foreach (var (key, window) in windows.ToArray())
+        {
+            if (CloseWindow(window, ref failures))
+            {
+                windows.Remove(key);
+            }
+        }
+    }
+
+    private static bool CloseWindow(
+        Window window,
+        ref List<Exception>? failures)
+    {
+        var handle = OverlayWindow.GetHandle(window);
+        try
+        {
+            window.Content = null;
+            window.Close();
+        }
+        catch (Exception exception)
+        {
+            (failures ??= []).Add(exception);
+        }
+
+        if (handle is { } openHandle
+            && OverlayWindow.IsOpen(openHandle))
+        {
+            try
+            {
+                OverlayWindow.Destroy(openHandle);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
+        }
+
+        return handle is null || !OverlayWindow.IsOpen(handle.Value);
+    }
+
+    private static Window CreateWindow() =>
         new()
         {
             AllowsTransparency = true,
             Background = Brushes.Transparent,
             Focusable = false,
-            Height = _desktopBounds.Height,
             IsHitTestVisible = false,
-            Left = _desktopBounds.Left,
             ResizeMode = ResizeMode.NoResize,
             ShowActivated = false,
             ShowInTaskbar = false,
-            Top = _desktopBounds.Top,
             Topmost = true,
-            Width = _desktopBounds.Width,
+            WindowStartupLocation = WindowStartupLocation.Manual,
             WindowStyle = WindowStyle.None,
         };
-}
-
-public readonly record struct VirtualDesktopBounds
-{
-    public VirtualDesktopBounds(
-        double left,
-        double top,
-        double width,
-        double height)
-    {
-        if (!double.IsFinite(left))
-        {
-            throw new ArgumentOutOfRangeException(nameof(left));
-        }
-
-        if (!double.IsFinite(top))
-        {
-            throw new ArgumentOutOfRangeException(nameof(top));
-        }
-
-        if (!double.IsFinite(width) || width <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(width));
-        }
-
-        if (!double.IsFinite(height) || height <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(height));
-        }
-
-        Left = left;
-        Top = top;
-        Width = width;
-        Height = height;
-    }
-
-    public static VirtualDesktopBounds Current =>
-        new(
-            SystemParameters.VirtualScreenLeft,
-            SystemParameters.VirtualScreenTop,
-            SystemParameters.VirtualScreenWidth,
-            SystemParameters.VirtualScreenHeight);
-
-    public double Left { get; }
-
-    public double Top { get; }
-
-    public double Width { get; }
-
-    public double Height { get; }
 }
 
 internal abstract class WpfPreparedScene(
@@ -263,40 +395,49 @@ internal abstract class WpfPreparedScene(
 
 internal sealed class WpfVisibleScene(
     WpfOverlayRenderer renderer,
-    TargetScene view)
+    TargetMap map,
+    ImmutableArray<MonitorScene> monitors)
     : WpfPreparedScene(renderer)
 {
-    internal TargetScene View { get; } = view;
+    internal TargetMap Map { get; } = map;
+
+    internal ImmutableArray<MonitorScene> Monitors { get; } = monitors;
 }
 
 internal sealed class WpfHiddenScene(WpfOverlayRenderer renderer)
     : WpfPreparedScene(renderer);
 
+internal sealed record MonitorScene(
+    PhysicalMonitor Monitor,
+    ImmutableArray<LabeledTarget> Targets);
+
 internal sealed class TargetScene : Canvas
 {
     internal TargetScene(
-        TargetMap map,
-        VirtualDesktopBounds desktopBounds)
+        PhysicalMonitor monitor,
+        MonitorProjection projection,
+        ImmutableArray<LabeledTarget> targets)
     {
-        Map = map;
-        Width = desktopBounds.Width;
-        Height = desktopBounds.Height;
+        Monitor = monitor;
+        Projection = projection;
+        Width = projection.Size.Width;
+        Height = projection.Size.Height;
         IsHitTestVisible = false;
 
-        foreach (var target in map.Targets)
+        foreach (var target in targets)
         {
             var badge = new TargetBadge(target);
-            SetLeft(
-                badge,
-                target.Target.Bounds.Left - desktopBounds.Left);
-            SetTop(
-                badge,
-                target.Target.Bounds.Top - desktopBounds.Top);
+            var origin = projection.Project(
+                target.Target.Bounds.Origin);
+            SetLeft(badge, origin.X);
+            SetTop(badge, origin.Y);
             Children.Add(badge);
         }
     }
 
-    internal TargetMap Map { get; }
+    internal PhysicalMonitor Monitor { get; }
+
+    internal MonitorProjection Projection { get; }
 }
 
 internal sealed class TargetBadge : Border
