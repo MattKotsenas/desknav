@@ -40,11 +40,11 @@ public sealed class WpfOverlayRendererTests
         Assert.Equal(
             left,
             desktop.FindMonitor(
-                Target(new PhysicalRect(-100, 600, 300, 200))));
+                new PhysicalRect(-100, 600, 300, 200)));
         Assert.Equal(
             right,
             desktop.FindMonitor(
-                Target(new PhysicalRect(-200, -100, 500, 300))));
+                new PhysicalRect(-200, -100, 500, 300)));
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public sealed class WpfOverlayRendererTests
 
         Assert.Throws<InvalidOperationException>(
             () => desktop.FindMonitor(
-                Target(new PhysicalRect(500, 500, 100, 100))));
+                new PhysicalRect(500, 500, 100, 100)));
     }
 
     [Fact]
@@ -761,9 +761,6 @@ public sealed class WpfOverlayRendererTests
                         TargetId.New(),
                         new PhysicalRect(100, 200, 800, 600))),
             ]);
-
-    private static DesktopTarget Target(PhysicalRect bounds) =>
-        new(TargetId.New(), bounds);
 
     private static RenderedBadge[] SceneManifest(TargetScene scene)
     {

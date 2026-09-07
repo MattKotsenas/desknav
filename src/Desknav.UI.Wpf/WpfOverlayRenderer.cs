@@ -272,7 +272,7 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
 
         foreach (var target in map.Targets)
         {
-            var monitor = desktop.FindMonitor(target.Target);
+            var monitor = desktop.FindMonitor(target.Target.Bounds);
             targets[monitor.Handle].Add(target);
         }
 

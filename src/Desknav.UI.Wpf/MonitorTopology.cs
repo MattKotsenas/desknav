@@ -81,11 +81,11 @@ internal sealed class PhysicalDesktop
 
     internal ImmutableArray<PhysicalMonitor> Monitors { get; }
 
-    internal PhysicalMonitor FindMonitor(DesktopTarget target)
+    internal PhysicalMonitor FindMonitor(PhysicalRect bounds)
     {
         foreach (var monitor in Monitors)
         {
-            if (monitor.Bounds.Contains(target.Bounds.Origin))
+            if (monitor.Bounds.Contains(bounds.Origin))
             {
                 return monitor;
             }
@@ -95,7 +95,7 @@ internal sealed class PhysicalDesktop
         long selectedArea = 0;
         foreach (var monitor in Monitors)
         {
-            var area = monitor.Bounds.IntersectionArea(target.Bounds);
+            var area = monitor.Bounds.IntersectionArea(bounds);
             if (area > selectedArea)
             {
                 selected = monitor;
@@ -105,8 +105,7 @@ internal sealed class PhysicalDesktop
 
         return selected
             ?? throw new InvalidOperationException(
-                $"Target {target.Id} does not intersect"
-                + " a current display.");
+                "Bounds do not intersect a current display.");
     }
 }
 
