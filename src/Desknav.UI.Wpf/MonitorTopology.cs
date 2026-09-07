@@ -2,79 +2,84 @@ using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
 
 using Desknav.ControlPlane;
 
 namespace Desknav.UI.Wpf;
 
-internal readonly record struct PhysicalMonitorBounds
+internal readonly record struct MonitorHandle
+    : IComparable<MonitorHandle>
 {
-    public PhysicalMonitorBounds(
-        int left,
-        int top,
-        int width,
-        int height)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+    // HMONITOR is borrowed; Windows exposes no release operation.
+    private readonly nint _value;
 
-        Left = left;
-        Top = top;
-        Width = width;
-        Height = height;
+    internal MonitorHandle(nint value)
+    {
+        if (value == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value));
+        }
+
+        _value = value;
     }
 
-    public int Left { get; }
+    internal nint ToNative() => _value;
 
-    public int Top { get; }
+    public int CompareTo(MonitorHandle other) =>
+        _value.ToInt64().CompareTo(other._value.ToInt64());
+}
 
-    public int Width { get; }
+internal readonly record struct WindowHandle
+{
+    // The WPF Window owns the HWND lifetime.
+    private readonly nint _value;
 
-    public int Height { get; }
-
-    internal long Right => (long)Left + Width;
-
-    internal long Bottom => (long)Top + Height;
-
-    internal bool Contains(int left, int top) =>
-        left >= Left
-        && left < Right
-        && top >= Top
-        && top < Bottom;
-
-    internal long IntersectionArea(TargetBounds target)
+    internal WindowHandle(nint value)
     {
-        var left = Math.Max((long)Left, target.Left);
-        var top = Math.Max((long)Top, target.Top);
-        var right = Math.Min(Right, (long)target.Left + target.Width);
-        var bottom = Math.Min(
-            Bottom,
-            (long)target.Top + target.Height);
-        return Math.Max(0, right - left)
-            * Math.Max(0, bottom - top);
+        if (value == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value));
+        }
+
+        _value = value;
     }
+
+    internal nint ToNative() => _value;
 }
 
 internal readonly record struct PhysicalMonitor
 {
-    public PhysicalMonitor(
-        nint handle,
-        PhysicalMonitorBounds bounds)
+    internal PhysicalMonitor(
+        MonitorHandle handle,
+        PhysicalRect bounds)
     {
-        if (handle == 0)
+        if (handle == default)
         {
-            throw new ArgumentOutOfRangeException(nameof(handle));
+            throw new ArgumentException(
+                "A monitor handle must be initialized.",
+                nameof(handle));
+        }
+
+        if (bounds == default)
+        {
+            throw new ArgumentException(
+                "Monitor bounds must be initialized.",
+                nameof(bounds));
         }
 
         Handle = handle;
         Bounds = bounds;
     }
 
-    public nint Handle { get; }
+    internal MonitorHandle Handle { get; }
 
-    public PhysicalMonitorBounds Bounds { get; }
+    internal PhysicalRect Bounds { get; }
+}
 
-    internal static void Validate(
+internal sealed class PhysicalDesktop
+{
+    internal PhysicalDesktop(
         ImmutableArray<PhysicalMonitor> monitors)
     {
         if (monitors.IsDefaultOrEmpty)
@@ -83,10 +88,7 @@ internal readonly record struct PhysicalMonitor
                 "The overlay requires at least one display.");
         }
 
-        if (monitors.Any(
-                static monitor =>
-                    monitor.Handle == 0
-                    || monitor.Bounds == default))
+        if (monitors.Any(static monitor => monitor == default))
         {
             throw new InvalidOperationException(
                 "Every overlay display must be initialized.");
@@ -101,6 +103,87 @@ internal readonly record struct PhysicalMonitor
             throw new InvalidOperationException(
                 "The overlay cannot contain duplicate displays.");
         }
+
+        Monitors = monitors
+            .OrderBy(static monitor => monitor.Bounds)
+            .ThenBy(static monitor => monitor.Handle)
+            .ToImmutableArray();
+    }
+
+    internal ImmutableArray<PhysicalMonitor> Monitors { get; }
+
+    internal PhysicalMonitor FindMonitor(DesktopTarget target)
+    {
+        foreach (var monitor in Monitors)
+        {
+            if (monitor.Bounds.Contains(target.Bounds.Origin))
+            {
+                return monitor;
+            }
+        }
+
+        PhysicalMonitor? selected = null;
+        long selectedArea = 0;
+        foreach (var monitor in Monitors)
+        {
+            var area = monitor.Bounds.IntersectionArea(target.Bounds);
+            if (area > selectedArea)
+            {
+                selected = monitor;
+                selectedArea = area;
+            }
+        }
+
+        return selected
+            ?? throw new InvalidOperationException(
+                $"Target {target.Id} does not intersect"
+                + " a current display.");
+    }
+}
+
+internal readonly record struct MonitorProjection
+{
+    internal MonitorProjection(
+        PhysicalRect monitorBounds,
+        DpiScale scale)
+    {
+        if (monitorBounds == default)
+        {
+            throw new ArgumentException(
+                "Monitor bounds must be initialized.",
+                nameof(monitorBounds));
+        }
+
+        if (!double.IsFinite(scale.DpiScaleX)
+            || scale.DpiScaleX <= 0
+            || !double.IsFinite(scale.DpiScaleY)
+            || scale.DpiScaleY <= 0)
+        {
+            throw new InvalidOperationException(
+                "Windows reported an invalid overlay DPI scale.");
+        }
+
+        MonitorBounds = monitorBounds;
+        Scale = scale;
+    }
+
+    internal PhysicalRect MonitorBounds { get; }
+
+    internal DpiScale Scale { get; }
+
+    internal Size Size =>
+        new(
+            MonitorBounds.Width / Scale.DpiScaleX,
+            MonitorBounds.Height / Scale.DpiScaleY);
+
+    internal Point Project(PhysicalPoint point)
+    {
+        var offset =
+            point.ClampToMinimum(MonitorBounds.Origin)
+            - MonitorBounds.Origin;
+        return new Point(
+            offset.X / Scale.DpiScaleX,
+            offset.Y / Scale.DpiScaleY);
     }
 }
 
@@ -109,10 +192,10 @@ internal static partial class MonitorTopology
     private static readonly MonitorEnumerationCallback Callback =
         AddMonitor;
 
-    internal static ImmutableArray<PhysicalMonitor> GetCurrent() =>
-        DpiAwarenessContext.RunPerMonitorAware(GetCurrentCore);
+    internal static PhysicalDesktop GetCurrent() =>
+        PerMonitorDpi.Run(GetCurrentCore);
 
-    private static ImmutableArray<PhysicalMonitor> GetCurrentCore()
+    private static PhysicalDesktop GetCurrentCore()
     {
         var state = new MonitorEnumerationState();
         var stateHandle = GCHandle.Alloc(state);
@@ -140,9 +223,7 @@ internal static partial class MonitorTopology
             stateHandle.Free();
         }
 
-        var monitors = state.Monitors.ToImmutable();
-        PhysicalMonitor.Validate(monitors);
-        return monitors;
+        return new PhysicalDesktop(state.Monitors.ToImmutable());
     }
 
     private static bool AddMonitor(
@@ -160,8 +241,8 @@ internal static partial class MonitorTopology
                     "Monitor enumeration lost its capture state.");
             state.Monitors.Add(
                 new PhysicalMonitor(
-                    monitor,
-                    new PhysicalMonitorBounds(
+                    new MonitorHandle(monitor),
+                    new PhysicalRect(
                         bounds.Left,
                         bounds.Top,
                         checked(bounds.Right - bounds.Left),
@@ -198,13 +279,15 @@ internal static partial class MonitorTopology
     }
 }
 
+internal delegate DpiScale WindowDpiReader(WindowHandle window);
+
 internal static class WindowDpi
 {
     private const double DefaultDpi = 96;
 
-    internal static DpiScale GetScale(nint windowHandle)
+    internal static DpiScale GetScale(WindowHandle window)
     {
-        var dpi = NativeMethods.GetDpiForWindow(windowHandle);
+        var dpi = NativeMethods.GetDpiForWindow(window.ToNative());
         return dpi == 0
             ? throw new InvalidOperationException(
                 "Windows could not determine the overlay window DPI.")
@@ -212,11 +295,56 @@ internal static class WindowDpi
     }
 }
 
-internal static class DpiAwarenessContext
+internal static class OverlayWindow
+{
+    internal static WindowHandle Position(
+        Window window,
+        PhysicalRect bounds) =>
+        PerMonitorDpi.Run(
+            () =>
+            {
+                var handle = new WindowHandle(
+                    new WindowInteropHelper(window).EnsureHandle());
+                if (!NativeMethods.SetWindowPos(
+                        handle.ToNative(),
+                        0,
+                        (int)bounds.Left,
+                        (int)bounds.Top,
+                        (int)bounds.Width,
+                        (int)bounds.Height,
+                        SetWindowPositionFlags.NoActivate
+                            | SetWindowPositionFlags.NoZOrder))
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastPInvokeError());
+                }
+
+                return handle;
+            });
+
+    internal static WindowHandle? GetHandle(Window window)
+    {
+        var value = new WindowInteropHelper(window).Handle;
+        return value == 0 ? null : new WindowHandle(value);
+    }
+
+    internal static bool IsOpen(WindowHandle window) =>
+        NativeMethods.IsWindow(window.ToNative());
+
+    internal static void Destroy(WindowHandle window)
+    {
+        if (!NativeMethods.DestroyWindow(window.ToNative()))
+        {
+            throw new Win32Exception(Marshal.GetLastPInvokeError());
+        }
+    }
+}
+
+internal static class PerMonitorDpi
 {
     private static readonly nint PerMonitorAwareV2 = new(-4);
 
-    internal static T RunPerMonitorAware<T>(Func<T> operation)
+    internal static T Run<T>(Func<T> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
         var previous = NativeMethods.SetThreadDpiAwarenessContext(
@@ -270,13 +398,13 @@ internal static class DpiAwarenessContext
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeRectangle
 {
-    public int Left;
+    internal int Left;
 
-    public int Top;
+    internal int Top;
 
-    public int Right;
+    internal int Right;
 
-    public int Bottom;
+    internal int Bottom;
 }
 
 [Flags]

@@ -125,10 +125,10 @@ public sealed class TargetDiscoveryActorTests
         {
             new DesktopTarget(
                 TargetId.New(),
-                new TargetBounds(-800, 100, 400, 300)),
+                new PhysicalRect(-800, 100, 400, 300)),
             new DesktopTarget(
                 TargetId.New(),
-                new TargetBounds(50, 75, 600, 450)),
+                new PhysicalRect(50, 75, 600, 450)),
         };
 
         harness.Actor.Tell(new DiscoverTargets(requestId));

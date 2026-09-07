@@ -1,9 +1,6 @@
 using System.Collections.Immutable;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -20,47 +17,47 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
         "One or more overlay windows failed to close.";
 
     private readonly Dispatcher _dispatcher;
-    private readonly Func<ImmutableArray<PhysicalMonitor>> _getMonitors;
-    private readonly Func<nint, PhysicalMonitor, DpiScale> _getScale;
+    private readonly Func<PhysicalDesktop> _getDesktop;
+    private readonly WindowDpiReader _readDpi;
     // Cleanup-resistant HWNDs stay owned so release can retry them.
-    private readonly Dictionary<nint, Window> _retainedWindows = [];
-    private Dictionary<nint, Window> _hostWindows = [];
+    private readonly Dictionary<WindowHandle, Window> _retainedWindows = [];
+    private Dictionary<MonitorHandle, Window> _hostWindows = [];
 
     public WpfOverlayRenderer(Dispatcher dispatcher)
         : this(
             dispatcher,
             MonitorTopology.GetCurrent,
-            static (window, _) => WindowDpi.GetScale(window))
+            WindowDpi.GetScale)
     {
     }
 
     internal WpfOverlayRenderer(
         Dispatcher dispatcher,
-        ImmutableArray<PhysicalMonitor> monitors,
-        Func<nint, PhysicalMonitor, DpiScale> getScale)
+        PhysicalDesktop desktop,
+        WindowDpiReader readDpi)
         : this(
             dispatcher,
-            () => monitors,
-            getScale)
+            () => desktop,
+            readDpi)
     {
-        PhysicalMonitor.Validate(monitors);
+        ArgumentNullException.ThrowIfNull(desktop);
     }
 
     private WpfOverlayRenderer(
         Dispatcher dispatcher,
-        Func<ImmutableArray<PhysicalMonitor>> getMonitors,
-        Func<nint, PhysicalMonitor, DpiScale> getScale)
+        Func<PhysicalDesktop> getDesktop,
+        WindowDpiReader readDpi)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
-        ArgumentNullException.ThrowIfNull(getMonitors);
-        ArgumentNullException.ThrowIfNull(getScale);
+        ArgumentNullException.ThrowIfNull(getDesktop);
+        ArgumentNullException.ThrowIfNull(readDpi);
 
         _dispatcher = dispatcher;
-        _getMonitors = getMonitors;
-        _getScale = getScale;
+        _getDesktop = getDesktop;
+        _readDpi = readDpi;
     }
 
-    internal IReadOnlyDictionary<nint, Window> HostWindows =>
+    internal IReadOnlyDictionary<MonitorHandle, Window> HostWindows =>
         _hostWindows;
 
     internal WpfPreparedScene? ActiveScene { get; private set; }
@@ -155,7 +152,7 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
                     visible.Map,
                     CreateMonitorScenes(
                         visible.Map,
-                        _getMonitors())),
+                        _getDesktop())),
             TargetPresentation.Hidden => new WpfHiddenScene(this),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(presentation),
@@ -206,21 +203,22 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
 
     private void ActivateVisible(WpfVisibleScene scene)
     {
-        var replacements = new Dictionary<nint, Window>();
+        var replacements = new Dictionary<MonitorHandle, Window>();
         try
         {
             foreach (var monitor in scene.Monitors)
             {
                 var host = CreateWindow();
                 replacements.Add(monitor.Monitor.Handle, host);
-                var windowHandle = PositionWindow(
+                var windowHandle = OverlayWindow.Position(
                     host,
                     monitor.Monitor.Bounds);
-                var scale = _getScale(windowHandle, monitor.Monitor);
-                ValidateScale(scale);
+                var projection = new MonitorProjection(
+                    monitor.Monitor.Bounds,
+                    _readDpi(windowHandle));
                 host.Content = new TargetScene(
                     monitor.Monitor,
-                    scale,
+                    projection,
                     monitor.Targets);
             }
 
@@ -263,115 +261,33 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
 
     private static ImmutableArray<MonitorScene> CreateMonitorScenes(
         TargetMap map,
-        ImmutableArray<PhysicalMonitor> monitors)
+        PhysicalDesktop desktop)
     {
-        var orderedMonitors = monitors
-            .OrderBy(static monitor => monitor.Bounds.Top)
-            .ThenBy(static monitor => monitor.Bounds.Left)
-            .ThenBy(static monitor => monitor.Handle)
-            .ToImmutableArray();
-        var targets = orderedMonitors
-            .Select(
-                static _ =>
-                    ImmutableArray.CreateBuilder<LabeledTarget>())
-            .ToArray();
+        var targets = desktop.Monitors.ToDictionary(
+            static monitor => monitor.Handle,
+            static _ => ImmutableArray.CreateBuilder<LabeledTarget>());
 
         foreach (var target in map.Targets)
         {
-            var monitorIndex = FindMonitor(
-                target.Target.Bounds,
-                orderedMonitors);
-            if (monitorIndex < 0)
-            {
-                throw new InvalidOperationException(
-                    $"Target {target.Target.Id} does not intersect"
-                    + " a current display.");
-            }
-
-            targets[monitorIndex].Add(target);
+            var monitor = desktop.FindMonitor(target.Target);
+            targets[monitor.Handle].Add(target);
         }
 
-        return orderedMonitors
+        return desktop.Monitors
             .Select(
-                (monitor, index) =>
+                monitor =>
                     new MonitorScene(
                         monitor,
-                        targets[index].ToImmutable()))
+                        targets[monitor.Handle].ToImmutable()))
             .ToImmutableArray();
-    }
-
-    private static int FindMonitor(
-        TargetBounds target,
-        ImmutableArray<PhysicalMonitor> monitors)
-    {
-        for (var index = 0; index < monitors.Length; index++)
-        {
-            if (monitors[index].Bounds.Contains(
-                    target.Left,
-                    target.Top))
-            {
-                return index;
-            }
-        }
-
-        var selectedIndex = -1;
-        long selectedArea = 0;
-        for (var index = 0; index < monitors.Length; index++)
-        {
-            var area = monitors[index].Bounds.IntersectionArea(target);
-            if (area > selectedArea)
-            {
-                selectedIndex = index;
-                selectedArea = area;
-            }
-        }
-
-        return selectedIndex;
-    }
-
-    private static nint PositionWindow(
-        Window window,
-        PhysicalMonitorBounds bounds) =>
-        DpiAwarenessContext.RunPerMonitorAware(
-            () =>
-            {
-                var handle =
-                    new WindowInteropHelper(window).EnsureHandle();
-                if (!NativeMethods.SetWindowPos(
-                        handle,
-                        0,
-                        bounds.Left,
-                        bounds.Top,
-                        bounds.Width,
-                        bounds.Height,
-                        SetWindowPositionFlags.NoActivate
-                            | SetWindowPositionFlags.NoZOrder))
-                {
-                    throw new Win32Exception(
-                        Marshal.GetLastPInvokeError());
-                }
-
-                return handle;
-            });
-
-    private static void ValidateScale(DpiScale scale)
-    {
-        if (!double.IsFinite(scale.DpiScaleX)
-            || scale.DpiScaleX <= 0
-            || !double.IsFinite(scale.DpiScaleY)
-            || scale.DpiScaleY <= 0)
-        {
-            throw new InvalidOperationException(
-                "Windows reported an invalid overlay DPI scale.");
-        }
     }
 
     private void RetainWindows(IEnumerable<Window> windows)
     {
         foreach (var window in windows)
         {
-            var handle = new WindowInteropHelper(window).Handle;
-            if (handle != 0 && NativeMethods.IsWindow(handle))
+            if (OverlayWindow.GetHandle(window) is { } handle
+                && OverlayWindow.IsOpen(handle))
             {
                 _retainedWindows[handle] = window;
             }
@@ -394,9 +310,10 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
         }
     }
 
-    private static void CloseOwnedWindows(
-        IDictionary<nint, Window> windows,
+    private static void CloseOwnedWindows<TKey>(
+        IDictionary<TKey, Window> windows,
         ref List<Exception>? failures)
+        where TKey : notnull
     {
         foreach (var (key, window) in windows.ToArray())
         {
@@ -411,7 +328,7 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
         Window window,
         ref List<Exception>? failures)
     {
-        var handle = new WindowInteropHelper(window).Handle;
+        var handle = OverlayWindow.GetHandle(window);
         try
         {
             window.Content = null;
@@ -422,15 +339,20 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
             (failures ??= []).Add(exception);
         }
 
-        if (handle != 0
-            && NativeMethods.IsWindow(handle)
-            && !NativeMethods.DestroyWindow(handle))
+        if (handle is { } openHandle
+            && OverlayWindow.IsOpen(openHandle))
         {
-            (failures ??= []).Add(
-                new Win32Exception(Marshal.GetLastPInvokeError()));
+            try
+            {
+                OverlayWindow.Destroy(openHandle);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
         }
 
-        return handle == 0 || !NativeMethods.IsWindow(handle);
+        return handle is null || !OverlayWindow.IsOpen(handle.Value);
     }
 
     private static Window CreateWindow() =>
@@ -490,39 +412,29 @@ internal sealed class TargetScene : Canvas
 {
     internal TargetScene(
         PhysicalMonitor monitor,
-        DpiScale scale,
+        MonitorProjection projection,
         ImmutableArray<LabeledTarget> targets)
     {
         Monitor = monitor;
-        Scale = scale;
-        Width = monitor.Bounds.Width / scale.DpiScaleX;
-        Height = monitor.Bounds.Height / scale.DpiScaleY;
+        Projection = projection;
+        Width = projection.Size.Width;
+        Height = projection.Size.Height;
         IsHitTestVisible = false;
 
         foreach (var target in targets)
         {
             var badge = new TargetBadge(target);
-            SetLeft(
-                badge,
-                (Math.Max(
-                        target.Target.Bounds.Left,
-                        monitor.Bounds.Left)
-                    - monitor.Bounds.Left)
-                / scale.DpiScaleX);
-            SetTop(
-                badge,
-                (Math.Max(
-                        target.Target.Bounds.Top,
-                        monitor.Bounds.Top)
-                    - monitor.Bounds.Top)
-                / scale.DpiScaleY);
+            var origin = projection.Project(
+                target.Target.Bounds.Origin);
+            SetLeft(badge, origin.X);
+            SetTop(badge, origin.Y);
             Children.Add(badge);
         }
     }
 
     internal PhysicalMonitor Monitor { get; }
 
-    internal DpiScale Scale { get; }
+    internal MonitorProjection Projection { get; }
 }
 
 internal sealed class TargetBadge : Border

@@ -67,10 +67,10 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
             {
                 new DesktopTarget(
                     TargetId.New(),
-                    new TargetBounds(-1200, 40, 640, 480)),
+                    new PhysicalRect(-1200, 40, 640, 480)),
                 new DesktopTarget(
                     TargetId.New(),
-                    new TargetBounds(100, 200, 800, 600)),
+                    new PhysicalRect(100, 200, 800, 600)),
             };
             current.Complete(currentTargets);
 

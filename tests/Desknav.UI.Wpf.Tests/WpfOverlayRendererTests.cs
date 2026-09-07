@@ -11,12 +11,90 @@ namespace Desknav.UI.Wpf.Tests;
 
 public sealed class WpfOverlayRendererTests
 {
-    private static readonly ImmutableArray<PhysicalMonitor> TestMonitors =
-    [
+    private static readonly PhysicalDesktop TestDesktop =
         new(
-            new nint(1),
-            new PhysicalMonitorBounds(-1920, -1080, 3840, 2160)),
-    ];
+            [
+                new PhysicalMonitor(
+                    new MonitorHandle(new nint(1)),
+                    new PhysicalRect(
+                        -1920,
+                        -1080,
+                        3840,
+                        2160)),
+            ]);
+
+    [Fact]
+    public void PhysicalDesktopOwnsTargetsByTopLeftThenIntersection()
+    {
+        var left = new PhysicalMonitor(
+            new MonitorHandle(new nint(1)),
+            new PhysicalRect(-1920, 0, 1920, 1080));
+        var right = new PhysicalMonitor(
+            new MonitorHandle(new nint(2)),
+            new PhysicalRect(0, 0, 2560, 1440));
+        var desktop = new PhysicalDesktop([right, left]);
+
+        Assert.Equal(
+            left,
+            desktop.FindMonitor(
+                Target(new PhysicalRect(-100, 600, 300, 200))));
+        Assert.Equal(
+            right,
+            desktop.FindMonitor(
+                Target(new PhysicalRect(-200, -100, 500, 300))));
+    }
+
+    [Fact]
+    public void MonitorProjectionConvertsPhysicalRectsToLocalDips()
+    {
+        var projection = new MonitorProjection(
+            new PhysicalRect(0, 0, 2560, 1440),
+            new DpiScale(1.5, 1.5));
+
+        Assert.Equal(
+            new Size(2560d / 1.5, 1440d / 1.5),
+            projection.Size);
+        Assert.Equal(
+            new Point(100, 200),
+            projection.Project(
+                new PhysicalPoint(150, 300)));
+        Assert.Equal(
+            new Point(),
+            projection.Project(
+                new PhysicalPoint(-200, -100)));
+    }
+
+    [Fact]
+    public void PhysicalDesktopRejectsDuplicateMonitorHandles()
+    {
+        var handle = new MonitorHandle(new nint(1));
+
+        Assert.Throws<InvalidOperationException>(
+            () => new PhysicalDesktop(
+                [
+                    new PhysicalMonitor(
+                        handle,
+                        new PhysicalRect(0, 0, 400, 300)),
+                    new PhysicalMonitor(
+                        handle,
+                        new PhysicalRect(400, 0, 400, 300)),
+                ]));
+    }
+
+    [Fact]
+    public void PhysicalDesktopRejectsTargetsOutsideEveryMonitor()
+    {
+        var desktop = new PhysicalDesktop(
+            [
+                new PhysicalMonitor(
+                    new MonitorHandle(new nint(1)),
+                    new PhysicalRect(0, 0, 400, 300)),
+            ]);
+
+        Assert.Throws<InvalidOperationException>(
+            () => desktop.FindMonitor(
+                Target(new PhysicalRect(500, 500, 100, 100))));
+    }
 
     [Fact]
     public async Task VisiblePreparationSnapshotsMonitorAssignments()
@@ -32,7 +110,9 @@ public sealed class WpfOverlayRendererTests
                     CancellationToken.None)));
         Assert.Same(map, scene.Map);
         var monitor = Assert.Single(scene.Monitors);
-        Assert.Equal(new nint(1), monitor.Monitor.Handle);
+        Assert.Equal(
+            new MonitorHandle(new nint(1)),
+            monitor.Monitor.Handle);
         Assert.Equal(map.Targets, monitor.Targets);
         Assert.Empty(
             await dispatcher.InvokeAsync(() => renderer.HostWindows));
@@ -310,10 +390,10 @@ public sealed class WpfOverlayRendererTests
         var renderer = Renderer(dispatcher.Dispatcher);
         var first = new DesktopTarget(
             TargetId.Parse("00000000-0000-0000-0000-000000000001"),
-            new TargetBounds(-1000, -500, 300, 200));
+            new PhysicalRect(-1000, -500, 300, 200));
         var second = new DesktopTarget(
             TargetId.Parse("00000000-0000-0000-0000-000000000002"),
-            new TargetBounds(100, 200, 400, 300));
+            new PhysicalRect(100, 200, 400, 300));
         var map = new TargetMap(
             TargetDiscoveryRequestId.New(),
             [
@@ -346,33 +426,36 @@ public sealed class WpfOverlayRendererTests
     public async Task VisibleSceneProjectsTargetsIntoMonitorLocalDips()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        ImmutableArray<PhysicalMonitor> monitors =
-        [
-            new PhysicalMonitor(
-                new nint(1),
-                new PhysicalMonitorBounds(-1920, 0, 1920, 1080)),
-            new PhysicalMonitor(
-                new nint(2),
-                new PhysicalMonitorBounds(0, 0, 2560, 1440)),
-        ];
+        var desktop = new PhysicalDesktop(
+            [
+                new PhysicalMonitor(
+                    new MonitorHandle(new nint(1)),
+                    new PhysicalRect(-1920, 0, 1920, 1080)),
+                new PhysicalMonitor(
+                    new MonitorHandle(new nint(2)),
+                    new PhysicalRect(0, 0, 2560, 1440)),
+            ]);
+        var scales = new Queue<DpiScale>(
+            [
+                new DpiScale(1, 1),
+                new DpiScale(1.5, 1.5),
+            ]);
         var renderer = new WpfOverlayRenderer(
             dispatcher.Dispatcher,
-            monitors,
-            static (_, monitor) => monitor.Handle == new nint(1)
-                ? new DpiScale(1, 1)
-                : new DpiScale(1.5, 1.5));
+            desktop,
+            _ => scales.Dequeue());
         var left = new DesktopTarget(
             TargetId.Parse("00000000-0000-0000-0000-000000000001"),
-            new TargetBounds(-1000, 300, 300, 200));
+            new PhysicalRect(-1000, 300, 300, 200));
         var right = new DesktopTarget(
             TargetId.Parse("00000000-0000-0000-0000-000000000002"),
-            new TargetBounds(150, 300, 400, 300));
+            new PhysicalRect(150, 300, 400, 300));
         var crossing = new DesktopTarget(
             TargetId.Parse("00000000-0000-0000-0000-000000000003"),
-            new TargetBounds(-100, 600, 300, 200));
+            new PhysicalRect(-100, 600, 300, 200));
         var largestIntersection = new DesktopTarget(
             TargetId.Parse("00000000-0000-0000-0000-000000000004"),
-            new TargetBounds(-200, -100, 500, 300));
+            new PhysicalRect(-200, -100, 500, 300));
         var map = new TargetMap(
             TargetDiscoveryRequestId.New(),
             [
@@ -407,7 +490,9 @@ public sealed class WpfOverlayRendererTests
             views,
             view =>
             {
-                Assert.Equal(new nint(1), view.Key);
+                Assert.Equal(
+                    new MonitorHandle(new nint(1)),
+                    view.Key);
                 Assert.Equal(
                     [
                         new RenderedBadge(left.Id, "f", 920, 300),
@@ -417,7 +502,9 @@ public sealed class WpfOverlayRendererTests
             },
             view =>
             {
-                Assert.Equal(new nint(2), view.Key);
+                Assert.Equal(
+                    new MonitorHandle(new nint(2)),
+                    view.Key);
                 Assert.Equal(
                     [
                         new RenderedBadge(right.Id, "d", 100, 200),
@@ -436,29 +523,22 @@ public sealed class WpfOverlayRendererTests
     public async Task FailedReplacementPreservesActiveWindowsAndClosesStagedOnes()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        ImmutableArray<PhysicalMonitor> monitors =
-        [
-            new PhysicalMonitor(
-                new nint(1),
-                new PhysicalMonitorBounds(0, 0, 400, 300)),
-            new PhysicalMonitor(
-                new nint(2),
-                new PhysicalMonitorBounds(400, 0, 400, 300)),
-        ];
-        var stagedHandles = new List<nint>();
+        var desktop = TwoMonitorDesktop();
+        var stagedHandles = new List<WindowHandle>();
         var failReplacement = false;
+        var replacementDpiReads = 0;
         var renderer = new WpfOverlayRenderer(
             dispatcher.Dispatcher,
-            monitors,
-            (window, monitor) =>
+            desktop,
+            window =>
             {
                 if (failReplacement)
                 {
                     stagedHandles.Add(window);
+                    replacementDpiReads++;
                 }
 
-                return monitor.Handle == new nint(2)
-                    && failReplacement
+                return replacementDpiReads == 2
                     ? throw new InvalidOperationException(
                         "DPI lookup failed.")
                     : new DpiScale(1, 1);
@@ -486,10 +566,11 @@ public sealed class WpfOverlayRendererTests
             originalWindows,
             pair => Assert.Same(pair.Value, remaining[pair.Key]));
         Assert.Same(first, renderer.ActiveScene);
+        Assert.Equal(2, replacementDpiReads);
         Assert.All(
             stagedHandles,
             static handle => Assert.False(
-                NativeMethods.IsWindow(handle)));
+                OverlayWindow.IsOpen(handle)));
 
         await replacement.DisposeAsync();
         await first.DisposeAsync();
@@ -499,19 +580,10 @@ public sealed class WpfOverlayRendererTests
     public async Task ActivationOwnsOneHostWindowPerMonitor()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        ImmutableArray<PhysicalMonitor> monitors =
-        [
-            new PhysicalMonitor(
-                new nint(1),
-                new PhysicalMonitorBounds(0, 0, 400, 300)),
-            new PhysicalMonitor(
-                new nint(2),
-                new PhysicalMonitorBounds(400, 0, 400, 300)),
-        ];
         var renderer = new WpfOverlayRenderer(
             dispatcher.Dispatcher,
-            monitors,
-            static (_, _) => new DpiScale(1, 1));
+            TwoMonitorDesktop(),
+            static _ => new DpiScale(1, 1));
         var scene = Assert.IsType<WpfVisibleScene>(
             await renderer.PrepareAsync(
                 new TargetPresentation.Visible(Map()),
@@ -533,15 +605,23 @@ public sealed class WpfOverlayRendererTests
             hosts,
             host =>
             {
-                Assert.Equal(new nint(1), host.Key);
+                Assert.Equal(
+                    new MonitorHandle(new nint(1)),
+                    host.Key);
                 Assert.True(host.IsVisible);
-                Assert.Equal(new nint(1), host.View.Monitor.Handle);
+                Assert.Equal(
+                    new MonitorHandle(new nint(1)),
+                    host.View.Monitor.Handle);
             },
             host =>
             {
-                Assert.Equal(new nint(2), host.Key);
+                Assert.Equal(
+                    new MonitorHandle(new nint(2)),
+                    host.Key);
                 Assert.True(host.IsVisible);
-                Assert.Equal(new nint(2), host.View.Monitor.Handle);
+                Assert.Equal(
+                    new MonitorHandle(new nint(2)),
+                    host.View.Monitor.Handle);
             });
 
         await scene.DisposeAsync();
@@ -551,19 +631,10 @@ public sealed class WpfOverlayRendererTests
     public async Task ActivationCompletionCoversEveryMonitorSurface()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        ImmutableArray<PhysicalMonitor> monitors =
-        [
-            new PhysicalMonitor(
-                new nint(1),
-                new PhysicalMonitorBounds(0, 0, 400, 300)),
-            new PhysicalMonitor(
-                new nint(2),
-                new PhysicalMonitorBounds(400, 0, 400, 300)),
-        ];
         var renderer = new WpfOverlayRenderer(
             dispatcher.Dispatcher,
-            monitors,
-            static (_, _) => new DpiScale(1, 1));
+            TwoMonitorDesktop(),
+            static _ => new DpiScale(1, 1));
         var first = Assert.IsType<WpfVisibleScene>(
             await renderer.PrepareAsync(
                 new TargetPresentation.Visible(Map()),
@@ -614,9 +685,9 @@ public sealed class WpfOverlayRendererTests
     public async Task DefaultRendererActivatesEveryCurrentMonitor()
     {
         await using var dispatcher = new WpfDispatcherThread();
-        var monitors = await dispatcher.InvokeAsync(
+        var desktop = await dispatcher.InvokeAsync(
             MonitorTopology.GetCurrent);
-        var first = monitors[0];
+        var first = desktop.Monitors[0];
         var map = new TargetMap(
             TargetDiscoveryRequestId.New(),
             [
@@ -624,11 +695,7 @@ public sealed class WpfOverlayRendererTests
                     TargetLabel.From("f"),
                     new DesktopTarget(
                         TargetId.New(),
-                        new TargetBounds(
-                            first.Bounds.Left,
-                            first.Bounds.Top,
-                            1,
-                            1))),
+                        first.Bounds)),
             ]);
         var renderer = new WpfOverlayRenderer(dispatcher.Dispatcher);
         var scene = Assert.IsType<WpfVisibleScene>(
@@ -650,9 +717,11 @@ public sealed class WpfOverlayRendererTests
             active,
             static view =>
             {
-                Assert.NotEqual(0, view.Monitor.Handle);
-                Assert.True(view.Scale.DpiScaleX > 0);
-                Assert.True(view.Scale.DpiScaleY > 0);
+                Assert.NotEqual(default, view.Monitor.Handle);
+                Assert.True(
+                    view.Projection.Scale.DpiScaleX > 0);
+                Assert.True(
+                    view.Projection.Scale.DpiScaleY > 0);
             });
 
         await scene.DisposeAsync();
@@ -661,8 +730,19 @@ public sealed class WpfOverlayRendererTests
     private static WpfOverlayRenderer Renderer(Dispatcher dispatcher) =>
         new(
             dispatcher,
-            TestMonitors,
-            static (_, _) => new DpiScale(1, 1));
+            TestDesktop,
+            static _ => new DpiScale(1, 1));
+
+    private static PhysicalDesktop TwoMonitorDesktop() =>
+        new(
+            [
+                new PhysicalMonitor(
+                    new MonitorHandle(new nint(1)),
+                    new PhysicalRect(0, 0, 400, 300)),
+                new PhysicalMonitor(
+                    new MonitorHandle(new nint(2)),
+                    new PhysicalRect(400, 0, 400, 300)),
+            ]);
 
     private static TargetMap Map() =>
         new(
@@ -672,8 +752,11 @@ public sealed class WpfOverlayRendererTests
                     TargetLabel.From("f"),
                     new DesktopTarget(
                         TargetId.New(),
-                        new TargetBounds(100, 200, 800, 600))),
+                        new PhysicalRect(100, 200, 800, 600))),
             ]);
+
+    private static DesktopTarget Target(PhysicalRect bounds) =>
+        new(TargetId.New(), bounds);
 
     private static RenderedBadge[] SceneManifest(TargetScene scene)
     {

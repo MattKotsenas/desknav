@@ -63,16 +63,16 @@ public sealed class TargetLabelAllocatorTests
     {
         var first = new DesktopTarget(
             TargetId.From(new Guid(4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
-            new TargetBounds(10, 20, 100, 100));
+            new PhysicalRect(10, 20, 100, 100));
         var second = new DesktopTarget(
             TargetId.From(new Guid(3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
-            new TargetBounds(10, 20, 50, 100));
+            new PhysicalRect(10, 20, 50, 100));
         var third = new DesktopTarget(
             TargetId.From(new Guid(2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
-            new TargetBounds(10, 20, 100, 50));
+            new PhysicalRect(10, 20, 100, 50));
         var fourth = new DesktopTarget(
             TargetId.From(new Guid(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
-            new TargetBounds(10, 20, 100, 100));
+            new PhysicalRect(10, 20, 100, 100));
 
         var map = TargetLabelAllocator.Create(
             Snapshot(first, second, third, fourth));
@@ -138,5 +138,5 @@ public sealed class TargetLabelAllocatorTests
         int top) =>
         new(
             TargetId.From(new Guid(id, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
-            new TargetBounds(left, top, 100, 100));
+            new PhysicalRect(left, top, 100, 100));
 }

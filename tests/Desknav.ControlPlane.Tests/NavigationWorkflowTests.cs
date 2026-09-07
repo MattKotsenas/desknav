@@ -16,7 +16,7 @@ public sealed class NavigationWorkflowTests
             [
                 new DesktopTarget(
                     TargetId.Parse("00000000-0000-0000-0000-000000000003"),
-                    new TargetBounds(10, 20, 300, 400)),
+                    new PhysicalRect(10, 20, 300, 400)),
             ]);
 
     private static readonly TargetSnapshot SecondSnapshot =
@@ -25,7 +25,7 @@ public sealed class NavigationWorkflowTests
             [
                 new DesktopTarget(
                     TargetId.Parse("00000000-0000-0000-0000-000000000004"),
-                    new TargetBounds(50, 60, 700, 800)),
+                    new PhysicalRect(50, 60, 700, 800)),
             ]);
 
     private static readonly TargetMap FirstMap =

@@ -32,31 +32,9 @@ public readonly partial struct TargetId
             : Validation.Ok;
 }
 
-public readonly record struct TargetBounds
-{
-    public TargetBounds(int left, int top, int width, int height)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
-
-        Left = left;
-        Top = top;
-        Width = width;
-        Height = height;
-    }
-
-    public int Left { get; }
-
-    public int Top { get; }
-
-    public int Width { get; }
-
-    public int Height { get; }
-}
-
 public sealed record DesktopTarget
 {
-    public DesktopTarget(TargetId id, TargetBounds bounds)
+    public DesktopTarget(TargetId id, PhysicalRect bounds)
     {
         if (bounds == default)
         {
@@ -71,7 +49,7 @@ public sealed record DesktopTarget
 
     public TargetId Id { get; }
 
-    public TargetBounds Bounds { get; }
+    public PhysicalRect Bounds { get; }
 }
 
 public sealed record DiscoverTargets(TargetDiscoveryRequestId RequestId);

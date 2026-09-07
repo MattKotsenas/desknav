@@ -526,7 +526,7 @@ public sealed class OverlayActorTests
                         TargetLabel.From("f"),
                         new DesktopTarget(
                             TargetId.New(),
-                            new TargetBounds(100, 200, 800, 600))),
+                            new PhysicalRect(100, 200, 800, 600))),
                 ]));
 
     private sealed class ActorHarness : IAsyncDisposable
