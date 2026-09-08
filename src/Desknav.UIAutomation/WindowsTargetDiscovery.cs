@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 
 using Desknav.ControlPlane;
 
@@ -10,24 +11,12 @@ namespace Desknav.UIAutomation;
 /// </summary>
 public sealed class WindowsTargetDiscovery : ITargetDiscovery
 {
-    private readonly Func<CancellationToken, Task<UiAutomationCapture>> _capture;
+    private readonly ITargetScanner _scanner;
 
-    public WindowsTargetDiscovery()
-        : this(new WindowsTargetScanner())
-    {
-    }
-
-    public WindowsTargetDiscovery(WindowsTargetScanner scanner)
+    public WindowsTargetDiscovery(ITargetScanner scanner)
     {
         ArgumentNullException.ThrowIfNull(scanner);
-        _capture = scanner.CaptureForegroundWindowAsync;
-    }
-
-    internal WindowsTargetDiscovery(
-        Func<CancellationToken, Task<UiAutomationCapture>> capture)
-    {
-        ArgumentNullException.ThrowIfNull(capture);
-        _capture = capture;
+        _scanner = scanner;
     }
 
     public async Task<TargetDiscoveryResult> DiscoverAsync(
@@ -36,7 +25,8 @@ public sealed class WindowsTargetDiscovery : ITargetDiscovery
         UiAutomationCapture capture;
         try
         {
-            capture = await _capture(cancellationToken)
+            capture = await _scanner
+                .CaptureForegroundWindowAsync(cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (UiAutomationCaptureException)
@@ -62,7 +52,7 @@ public sealed class WindowsTargetDiscovery : ITargetDiscovery
             targets.Add(
                 new DesktopTarget(
                     TargetId.New(),
-                    mapped));
+                    mapped.Value));
         }
 
         return new TargetDiscoveryResult.Succeeded(
@@ -71,14 +61,14 @@ public sealed class WindowsTargetDiscovery : ITargetDiscovery
 
     private static bool TryMap(
         PhysicalBounds bounds,
-        out PhysicalRect mapped)
+        [NotNullWhen(true)] out PhysicalRect? mapped)
     {
         var edges = bounds.OutwardEdges;
         var width = (long)edges.Right - edges.Left;
         var height = (long)edges.Bottom - edges.Top;
         if (width > int.MaxValue || height > int.MaxValue)
         {
-            mapped = default;
+            mapped = null;
             return false;
         }
 

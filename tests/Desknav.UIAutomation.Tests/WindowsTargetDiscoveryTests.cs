@@ -19,7 +19,7 @@ public sealed class WindowsTargetDiscoveryTests
             Element(
                 PhysicalBounds.TryCreate(100, 200, 300, 400),
                 UiAutomationExclusion.Disabled));
-        var discovery = new WindowsTargetDiscovery(
+        var discovery = Discovery(
             _ => Task.FromResult(capture));
 
         var result = await discovery.DiscoverAsync(
@@ -41,7 +41,7 @@ public sealed class WindowsTargetDiscoveryTests
             Element(
                 PhysicalBounds.TryCreate(10, 20, 30, 40),
                 exclusion: null));
-        var discovery = new WindowsTargetDiscovery(
+        var discovery = Discovery(
             _ => Task.FromResult(capture));
 
         var first = Assert.IsType<TargetDiscoveryResult.Succeeded>(
@@ -82,7 +82,7 @@ public sealed class WindowsTargetDiscoveryTests
                     uint.MaxValue,
                     10),
                 exclusion: null));
-        var discovery = new WindowsTargetDiscovery(
+        var discovery = Discovery(
             _ => Task.FromResult(capture));
 
         var result = await discovery.DiscoverAsync(
@@ -96,7 +96,7 @@ public sealed class WindowsTargetDiscoveryTests
     {
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        var discovery = new WindowsTargetDiscovery(
+        var discovery = Discovery(
             token => Task.FromCanceled<UiAutomationCapture>(token));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -106,7 +106,7 @@ public sealed class WindowsTargetDiscoveryTests
     [Fact]
     public async Task UnexpectedCaptureFailurePropagates()
     {
-        var discovery = new WindowsTargetDiscovery(
+        var discovery = Discovery(
             _ => Task.FromException<UiAutomationCapture>(
                 new InvalidOperationException(
                     "Unexpected capture failure.")));
@@ -117,6 +117,10 @@ public sealed class WindowsTargetDiscoveryTests
 
         Assert.Equal("Unexpected capture failure.", exception.Message);
     }
+
+    private static WindowsTargetDiscovery Discovery(
+        Func<CancellationToken, Task<UiAutomationCapture>> capture) =>
+        new(new FakeTargetScanner(capture));
 
     private static UiAutomationCapture Capture(
         params UiAutomationElementCapture[] elements) =>
@@ -145,4 +149,13 @@ public sealed class WindowsTargetDiscoveryTests
             Actions: [UiAutomationAction.Invoke],
             Exclusion: exclusion,
             UnavailableProperties: []);
+
+    private sealed class FakeTargetScanner(
+        Func<CancellationToken, Task<UiAutomationCapture>> capture)
+        : ITargetScanner
+    {
+        public Task<UiAutomationCapture> CaptureForegroundWindowAsync(
+            CancellationToken cancellationToken = default) =>
+            capture(cancellationToken);
+    }
 }

@@ -5,7 +5,13 @@ using System.Windows.Automation;
 
 namespace Desknav.UIAutomation;
 
-public sealed partial class WindowsTargetScanner
+public interface ITargetScanner
+{
+    Task<UiAutomationCapture> CaptureForegroundWindowAsync(
+        CancellationToken cancellationToken = default);
+}
+
+public sealed partial class WindowsTargetScanner : ITargetScanner
 {
     private const int DefaultMaximumDepth = 128;
     private const int DefaultMaximumElements = 10_000;
