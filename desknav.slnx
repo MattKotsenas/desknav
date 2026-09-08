@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Desknav.App/Desknav.App.csproj" />
     <Project Path="src/Desknav.ControlPlane/Desknav.ControlPlane.csproj" />
     <Project Path="src/Desknav.TargetDump/Desknav.TargetDump.csproj" />
     <Project Path="src/Desknav.UI.Core/Desknav.UI.Core.csproj" />
@@ -7,6 +8,7 @@
     <Project Path="src/Desknav.UIAutomation/Desknav.UIAutomation.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Desknav.App.Tests/Desknav.App.Tests.csproj" />
     <Project Path="tests/Desknav.ControlPlane.Tests/Desknav.ControlPlane.Tests.csproj" />
     <Project Path="tests/Desknav.Kanata.Tests/Desknav.Kanata.Tests.csproj" />
     <Project Path="tests/Desknav.UI.Core.Tests/Desknav.UI.Core.Tests.csproj" />

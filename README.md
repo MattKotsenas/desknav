@@ -15,6 +15,25 @@ the complete system.
 - [CONTRIBUTING.md](CONTRIBUTING.md) defines contribution practices,
   verification, and pull-request requirements.
 
+## Run the target overlay
+
+Start stock Kanata with its TCP server bound to loopback:
+
+```powershell
+kanata --cfg src\Desknav.Kanata\desknav.kbd --port 127.0.0.1:5829
+```
+
+In another terminal, start Desknav against that endpoint:
+
+```powershell
+dotnet run --project src\Desknav.App -- --kanata-endpoint 127.0.0.1:5829
+```
+
+`CAP Space f` discovers the foreground window's eligible controls and displays
+their labels. Escape hides the overlay. Labels are display-only; Desknav does
+not accept label input or perform actions. Press Ctrl+C, or stop Kanata, to
+exit Desknav.
+
 ## Inspect UI Automation targets
 
 The target dump scans the foreground window after a short delay and writes

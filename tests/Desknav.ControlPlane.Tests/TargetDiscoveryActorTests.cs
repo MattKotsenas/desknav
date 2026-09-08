@@ -85,6 +85,30 @@ public sealed class TargetDiscoveryActorTests
     }
 
     [Fact]
+    public async Task OperationDisposalReportsCancellationFailure()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var registration = cancellation.Token.Register(
+            () => throw new InvalidOperationException(
+                "Cancellation failed."));
+        var operation =
+            new TargetDiscoveryActor.DiscoveryOperation(
+                cancellation,
+                new RecordingCancelable(),
+                Task.CompletedTask);
+
+        Assert.True(
+            operation.TryRequestCancellation(out _));
+
+        var exception = await Assert.ThrowsAnyAsync<Exception>(
+            () => operation.DisposeAsync().AsTask());
+        Assert.Contains(
+            "Cancellation failed.",
+            exception.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReplacingTimeoutDisposesSupersededHandle()
     {
         using var cancellation = new CancellationTokenSource();
@@ -720,6 +744,27 @@ public sealed class TargetDiscoveryActorTests
         Assert.Contains(second, canceledCalls);
         first.Complete();
         second.Complete();
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => harness.Shutdown.WaitAsync(harness.TimeoutToken));
+    }
+
+    [Fact]
+    public async Task ShutdownTaskWaitsForDiscoveryCancellation()
+    {
+        await using var harness = await ActorHarness.CreateAsync();
+
+        harness.Actor.Tell(
+            new DiscoverTargets(TargetDiscoveryRequestId.New()));
+        var call = await harness.Discovery.ReadStartedCallAsync();
+
+        harness.System.Stop(harness.Actor);
+        await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
+        Assert.False(harness.Shutdown.IsCompleted);
+
+        call.Complete();
+
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
     }
 
     private sealed class ActorHarness : IAsyncDisposable
@@ -759,12 +804,16 @@ public sealed class TargetDiscoveryActorTests
                 Props.Create(
                     () => new RecordingActor(
                         _coordinatorMessages.Writer)));
+            var props = TargetDiscoveryActor.CreateProps(
+                Discovery,
+                operationTimeout ?? TimeSpan.FromHours(1),
+                _ => System.Terminate(),
+                out var shutdown);
+            Shutdown = shutdown;
             _parent = System.ActorOf(
                 Props.Create(
                     () => new TargetDiscoveryTestParent(
-                        TargetDiscoveryActor.CreateProps(
-                            Discovery,
-                            operationTimeout ?? TimeSpan.FromHours(1)),
+                        props,
                         _coordinator)));
         }
 
@@ -774,6 +823,8 @@ public sealed class TargetDiscoveryActorTests
             ActorRefs.Nobody;
 
         public ControllableTargetDiscovery Discovery { get; }
+
+        public Task Shutdown { get; }
 
         public TestScheduler Scheduler =>
             (TestScheduler)System.Scheduler;

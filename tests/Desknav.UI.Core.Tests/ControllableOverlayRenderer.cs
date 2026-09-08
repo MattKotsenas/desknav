@@ -18,6 +18,7 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
     private readonly ConcurrentQueue<PreparedScene> _activations = [];
     private readonly ConcurrentQueue<PreparationCall> _preparations = [];
     private int _activationInProgress;
+    private Exception? _cancellationFailure;
     private Exception? _synchronousActivationFailure;
     private Exception? _synchronousPreparationFailure;
 
@@ -37,6 +38,9 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
     public void FailActivationSynchronously(Exception exception) =>
         Volatile.Write(ref _synchronousActivationFailure, exception);
 
+    public void FailCancellation(Exception exception) =>
+        Volatile.Write(ref _cancellationFailure, exception);
+
     public void FailPreparationSynchronously(Exception exception) =>
         Volatile.Write(ref _synchronousPreparationFailure, exception);
 
@@ -44,7 +48,9 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
         TargetPresentation presentation,
         CancellationToken cancellationToken)
     {
-        if (Volatile.Read(ref _synchronousPreparationFailure) is { } failure)
+        if (Interlocked.Exchange(
+                ref _synchronousPreparationFailure,
+                null) is { } failure)
         {
             throw failure;
         }
@@ -74,7 +80,14 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
         WriteEvent(new PreparationStarted(call));
 
         using var registration = cancellationToken.Register(
-            () => WriteEvent(new PreparationCanceled(call)));
+            () =>
+            {
+                WriteEvent(new PreparationCanceled(call));
+                if (Volatile.Read(ref _cancellationFailure) is { } failure)
+                {
+                    throw failure;
+                }
+            });
         try
         {
             return await call.Completion.ConfigureAwait(false);
@@ -203,6 +216,7 @@ internal sealed class PreparedScene(ChannelWriter<OverlayEvent> events)
     : IPreparedScene
 {
     private int _isDisposed;
+    private bool _cancelDisposal;
     private Exception? _disposalFailure;
     private Exception? _synchronousDisposalFailure;
 
@@ -210,6 +224,9 @@ internal sealed class PreparedScene(ChannelWriter<OverlayEvent> events)
 
     public void FailDisposal(Exception exception) =>
         Volatile.Write(ref _disposalFailure, exception);
+
+    public void CancelDisposal() =>
+        Volatile.Write(ref _cancelDisposal, true);
 
     public void FailDisposalSynchronously(Exception exception) =>
         Volatile.Write(ref _synchronousDisposalFailure, exception);
@@ -231,6 +248,12 @@ internal sealed class PreparedScene(ChannelWriter<OverlayEvent> events)
         {
             throw new InvalidOperationException(
                 "The overlay event recorder rejected scene disposal.");
+        }
+
+        if (Volatile.Read(ref _cancelDisposal))
+        {
+            return ValueTask.FromCanceled(
+                new CancellationToken(canceled: true));
         }
 
         return Volatile.Read(ref _disposalFailure) is not { } disposalFailure

@@ -356,7 +356,10 @@ public sealed class WpfOverlayRendererTests
             var coordinator = system.ActorOf(
                 Props.Create(() => new RecordingActor(applied)));
             var overlay = system.ActorOf(
-                OverlayActor.CreateProps(renderer));
+                OverlayActor.CreateProps(
+                    renderer,
+                    _ => system.Terminate(),
+                    out _));
             var revision = PresentationRevision.From(1);
 
             overlay.Tell(

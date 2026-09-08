@@ -7,19 +7,22 @@ public sealed class NavigationCoordinator : ReceiveActor
     private readonly IActorRef _targetDiscovery;
     private readonly IActorRef _inputObserver;
     private readonly IActorRef _overlayOwner;
+    private readonly Action<Exception> _reportFailure;
     private NavigationWorkflowState _state =
         NavigationWorkflowState.Initial;
 
     public NavigationCoordinator(
         Props targetDiscoveryProps,
         IActorRef inputObserver,
-        IActorRef overlayOwner)
+        IActorRef overlayOwner,
+        Action<Exception> reportFailure)
     {
         _targetDiscovery = Context.ActorOf(
             targetDiscoveryProps,
             "target-discovery");
         _inputObserver = inputObserver;
         _overlayOwner = overlayOwner;
+        _reportFailure = reportFailure;
 
         Receive<KeyboardLayerObserved>(Handle);
         Receive<KeyboardLayerUnavailable>(Handle);
@@ -30,25 +33,28 @@ public sealed class NavigationCoordinator : ReceiveActor
 
     protected override SupervisorStrategy SupervisorStrategy() =>
         new OneForOneStrategy(
-            _ =>
+            exception =>
             {
-                Context.System.Terminate();
+                _reportFailure(exception);
                 return Directive.Stop;
             });
 
     public static Props CreateProps(
         Props targetDiscoveryProps,
         IActorRef inputObserver,
-        IActorRef overlayOwner)
+        IActorRef overlayOwner,
+        Action<Exception> reportFailure)
     {
         ArgumentNullException.ThrowIfNull(targetDiscoveryProps);
         ArgumentNullException.ThrowIfNull(inputObserver);
         ArgumentNullException.ThrowIfNull(overlayOwner);
+        ArgumentNullException.ThrowIfNull(reportFailure);
         return Akka.Actor.Props.Create(
             () => new NavigationCoordinator(
                 targetDiscoveryProps,
                 inputObserver,
-                overlayOwner));
+                overlayOwner,
+                reportFailure));
     }
 
     private void Handle(KeyboardLayerObserved observed)

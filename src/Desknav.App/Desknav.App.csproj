@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Desknav.ControlPlane\Desknav.ControlPlane.csproj" />
+    <ProjectReference Include="..\Desknav.UI.Core\Desknav.UI.Core.csproj" />
+    <ProjectReference Include="..\Desknav.UI.Wpf\Desknav.UI.Wpf.csproj" />
+    <ProjectReference Include="..\Desknav.UIAutomation\Desknav.UIAutomation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Akka" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>$(DefaultTargetFramework)-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+</Project>

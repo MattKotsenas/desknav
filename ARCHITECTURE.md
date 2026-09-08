@@ -137,6 +137,20 @@ navigation workflow. That coordinator-local identity scopes workflow state.
 Boundary request and operation identities map results back to a workflow
 generation but do not substitute for it.
 
+### Desknav application
+
+`Desknav.App` is the outer composition root. It owns one actor system and the
+WPF dispatcher, connects to the explicitly configured loopback Kanata
+endpoint, and composes the control-plane coordinator with the Windows UI
+Automation discovery and WPF overlay boundaries. Kanata ingress completion or
+unexpected actor-system termination ends the application. Boundary owners
+report fatal failures to the application, which terminates the actor system
+and awaits every boundary's cleanup before exiting.
+
+The application can display the current discovered target map, but it does not
+accept label input until the local Kanata actor can establish the
+[capture-safe binding](#local-kanata-actor).
+
 ### Desknav UI
 
 Desknav UI hosts presentation and one-shot-action boundaries. Its overlay

@@ -52,8 +52,6 @@ change through any channel.
 Implement the target-selection workflow defined in
 [ARCHITECTURE.md](ARCHITECTURE.md) with live target discovery, overlay
 presentation, and point, UIA activation, or coordinate-activation operations.
-Compose the UI Automation discovery adapter with the target-discovery owner in
-the runtime host.
 
 Done when Windows acceptance proves point without activation, explicit
 activation, cancellation after targets appear, focus change before the

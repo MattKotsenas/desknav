@@ -28,9 +28,12 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
                 NavigationCoordinator.CreateProps(
                     TargetDiscoveryActor.CreateProps(
                         discovery,
-                        TimeSpan.FromHours(1)),
+                        TimeSpan.FromHours(1),
+                        _ => system.Terminate(),
+                        out _),
                     ActorRefs.Nobody,
-                    overlayOwner));
+                    overlayOwner,
+                    _ => system.Terminate()));
             var targetDiscoveryOwner =
                 await ActorTestHelpers
                     .ResolveTargetDiscoveryAsync(
@@ -111,7 +114,8 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
                     Props.Create(
                         () => new FailingConstructionActor()),
                     ActorRefs.Nobody,
-                    ActorRefs.Nobody));
+                    ActorRefs.Nobody,
+                    _ => system.Terminate()));
 
             await system.WhenTerminated.WaitAsync(timeout.Token);
         }
@@ -135,7 +139,8 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
                 NavigationCoordinator.CreateProps(
                     Props.Create(() => new FailingActor()),
                     ActorRefs.Nobody,
-                    ActorRefs.Nobody));
+                    ActorRefs.Nobody,
+                    _ => system.Terminate()));
 
             await system.WhenTerminated.WaitAsync(timeout.Token);
         }

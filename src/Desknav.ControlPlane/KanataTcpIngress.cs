@@ -5,12 +5,17 @@ using Akka.Actor;
 
 namespace Desknav.ControlPlane;
 
-internal sealed class KanataTcpIngress
+public sealed class KanataTcpIngress
 {
     private readonly IPEndPoint _endpoint;
     private readonly IKanataFrameParser _frameParser;
 
-    public KanataTcpIngress(
+    public KanataTcpIngress(IPEndPoint endpoint)
+        : this(endpoint, new KanataFrameParser())
+    {
+    }
+
+    internal KanataTcpIngress(
         IPEndPoint endpoint,
         IKanataFrameParser frameParser)
     {

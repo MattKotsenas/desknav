@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.ExceptionServices;
 
 using Akka.Actor;
 using Akka.Event;
@@ -10,33 +11,41 @@ namespace Desknav.ControlPlane;
 /// Automation boundary. Reports successful and expected-failure outcomes
 /// to its parent.
 /// </summary>
-internal sealed class TargetDiscoveryActor : ReceiveActor
+public sealed class TargetDiscoveryActor : ReceiveActor
 {
     internal const int MaximumConcurrentOperations = 2;
 
     private readonly IActorRef _coordinator;
     private readonly ITargetDiscovery _discovery;
     private readonly TimeSpan _operationTimeout;
+    private readonly TaskCompletionSource<bool> _shutdown;
+    private readonly Action<Exception> _reportFailure;
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly Dictionary<
         TargetDiscoveryRequestId,
         DiscoveryOperation> _operations = [];
+    private readonly HashSet<Task> _releases = [];
     private TargetDiscoveryRequestId? _pendingRequestId;
     private bool _isTerminating;
     private bool _isUnavailable;
 
     public TargetDiscoveryActor(
         ITargetDiscovery discovery,
-        TimeSpan operationTimeout)
+        TimeSpan operationTimeout,
+        TaskCompletionSource<bool> shutdown,
+        Action<Exception> reportFailure)
     {
         _coordinator = Context.Parent;
         _discovery = discovery;
         _operationTimeout = operationTimeout;
+        _shutdown = shutdown;
+        _reportFailure = reportFailure;
 
         Receive<DiscoverTargets>(Handle);
         Receive<CancelTargetDiscovery>(Handle);
         Receive<DiscoveryFinished>(Handle);
         Receive<DiscoveryFaulted>(Handle);
+        Receive<DiscoveryReleased>(Handle);
         Receive<CancellationFailed>(Handle);
         Receive<OperationTimedOut>(Handle);
         Receive<CancellationTimedOut>(Handle);
@@ -44,25 +53,29 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
     public static Props CreateProps(
         ITargetDiscovery discovery,
-        TimeSpan operationTimeout)
+        TimeSpan operationTimeout,
+        Action<Exception> reportFailure,
+        out Task shutdown)
     {
         ArgumentNullException.ThrowIfNull(discovery);
+        ArgumentNullException.ThrowIfNull(reportFailure);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
             operationTimeout,
             TimeSpan.Zero);
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        shutdown = completion.Task;
         return Props.Create(
             () => new TargetDiscoveryActor(
                 discovery,
-                operationTimeout));
+                operationTimeout,
+                completion,
+                reportFailure));
     }
 
     protected override void PostStop()
     {
-        foreach (var operation in _operations.Values)
-        {
-            operation.CancelTimeout();
-            _ = CancelDuringShutdownAsync(operation);
-        }
+        CompleteShutdown();
 
         base.PostStop();
     }
@@ -169,10 +182,7 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
             return;
         }
 
-        _ = ReleaseOperationAsync(
-            finished.RequestId,
-            operation,
-            Self);
+        ReleaseOperation(finished.RequestId, operation);
         if (_isTerminating || _isUnavailable)
         {
             return;
@@ -191,21 +201,27 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
     private void Handle(DiscoveryFaulted faulted)
     {
-        if (_operations.Remove(faulted.RequestId, out var operation))
+        DiscoveryOperation? operation = null;
+        if (_operations.Remove(faulted.RequestId, out operation))
         {
-            _ = ReleaseOperationAsync(
-                faulted.RequestId,
-                operation,
-                Self);
+            ReleaseOperation(faulted.RequestId, operation);
         }
 
-        if (_isUnavailable)
+        if (faulted.Release is { } release)
+        {
+            _releases.Remove(release);
+        }
+
+        if (operation is not null
+            && operation.CancellationRequested
+            && !operation.UnsuccessfulCompletionPrecededCancellation)
         {
             _log.Debug(
                 faulted.Cause,
-                "Target discovery request {0} faulted after the owner"
-                + " became unavailable.",
+                "Canceled target discovery request {0} faulted while"
+                + " unwinding.",
                 faulted.RequestId);
+            StartPendingDiscovery();
             return;
         }
 
@@ -301,14 +317,58 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         string message,
         TargetDiscoveryRequestId requestId)
     {
+        _reportFailure(cause);
         if (_isTerminating)
         {
             return;
         }
-
         _isTerminating = true;
         _log.Error(cause, message, requestId);
-        Context.System.Terminate();
+    }
+
+    private Task CleanupAsync()
+    {
+        var cleanups = new List<Task>(
+            _operations.Count + _releases.Count);
+        foreach (var operation in _operations.Values)
+        {
+            cleanups.Add(CancelDuringShutdownAsync(operation));
+        }
+        _operations.Clear();
+        cleanups.AddRange(_releases);
+        _releases.Clear();
+        return AwaitCleanupAsync(cleanups);
+    }
+
+    private void CompleteShutdown()
+    {
+        try
+        {
+            _ = CompleteShutdownAsync(CleanupAsync());
+        }
+        catch (Exception exception)
+        {
+            _shutdown.TrySetException(exception);
+        }
+    }
+
+    private async Task CompleteShutdownAsync(Task cleanup)
+    {
+        await cleanup.ConfigureAwait(
+            ConfigureAwaitOptions.SuppressThrowing);
+        if (cleanup.IsFaulted)
+        {
+            _shutdown.TrySetException(
+                cleanup.Exception!.Flatten().InnerExceptions);
+        }
+        else if (cleanup.IsCanceled)
+        {
+            _shutdown.TrySetCanceled();
+        }
+        else
+        {
+            _shutdown.TrySetResult(true);
+        }
     }
 
     private void StartPendingDiscovery()
@@ -321,6 +381,25 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         _pendingRequestId = null;
         StartDiscovery(requestId);
     }
+
+    private void ReleaseOperation(
+        TargetDiscoveryRequestId requestId,
+        DiscoveryOperation operation)
+    {
+        var release = operation.DisposeAsync().AsTask();
+        _releases.Add(release);
+        release.PipeTo(
+            Self,
+            Self,
+            () => new DiscoveryReleased(release),
+            exception => new DiscoveryFaulted(
+                requestId,
+                exception,
+                release));
+    }
+
+    private void Handle(DiscoveryReleased released) =>
+        _releases.Remove(released.Release);
 
     private static async Task ObserveCancellationAsync(
         TargetDiscoveryRequestId requestId,
@@ -342,48 +421,75 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     private async Task CancelDuringShutdownAsync(
         DiscoveryOperation operation)
     {
+        var failures = new List<Exception>();
         try
         {
-            if (operation.TryRequestCancellation(out var cancellation))
-            {
-                await cancellation.ConfigureAwait(false);
-            }
+            operation.TryRequestCancellation(out _);
         }
         catch (Exception exception)
         {
-            _log.Error(
-                exception,
-                "Target discovery cancellation failed during shutdown.");
+            failures.Add(exception);
         }
-        finally
-        {
-            try
-            {
-                await operation.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                _log.Error(
-                    exception,
-                    "Target discovery cleanup failed during shutdown.");
-            }
-        }
-    }
 
-    private static async Task ReleaseOperationAsync(
-        TargetDiscoveryRequestId requestId,
-        DiscoveryOperation operation,
-        IActorRef owner)
-    {
+        if (!operation.Execution.IsCompletedSuccessfully
+            && operation.UnsuccessfulCompletionPrecededCancellation)
+        {
+            if (operation.Execution.Exception is { } exception)
+            {
+                failures.Add(exception);
+            }
+            else
+            {
+                failures.Add(
+                    new TaskCanceledException(operation.Execution));
+            }
+        }
+
         try
         {
             await operation.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            owner.Tell(
-                new DiscoveryFaulted(requestId, exception),
-                owner);
+            failures.Add(exception);
+        }
+
+        if (failures.Count == 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        if (failures.Count > 1)
+        {
+            throw new AggregateException(
+                "Target discovery cleanup failed.",
+                failures);
+        }
+    }
+
+    private static async Task AwaitCleanupAsync(
+        IReadOnlyCollection<Task> cleanups)
+    {
+        await Task.WhenAll(cleanups).ConfigureAwait(
+            ConfigureAwaitOptions.SuppressThrowing);
+        var failures = new List<Exception>();
+        foreach (var cleanup in cleanups)
+        {
+            if (cleanup.Exception is { } exception)
+            {
+                failures.AddRange(exception.InnerExceptions);
+            }
+            else if (cleanup.IsCanceled)
+            {
+                failures.Add(new TaskCanceledException(cleanup));
+            }
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new AggregateException(
+                "Target discovery cleanup failed.",
+                failures);
         }
     }
 
@@ -391,29 +497,13 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         TargetDiscoveryRequestId requestId,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var result = await _discovery
-                .DiscoverAsync(cancellationToken)
-                .ConfigureAwait(false);
-            return new DiscoveryFinished(
-                requestId,
-                cancellationToken.IsCancellationRequested,
-                result);
-        }
-        catch (Exception exception)
-            when (cancellationToken.IsCancellationRequested)
-        {
-            _log.Debug(
-                exception,
-                "Canceled target discovery request {0} faulted while"
-                + " unwinding.",
-                requestId);
-            return new DiscoveryFinished(
-                requestId,
-                WasCancellationRequested: true,
-                new TargetDiscoveryResult.Failed());
-        }
+        var result = await _discovery
+            .DiscoverAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new DiscoveryFinished(
+            requestId,
+            cancellationToken.IsCancellationRequested,
+            result);
     }
 
     /// <summary>
@@ -431,7 +521,10 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     /// </summary>
     private sealed record DiscoveryFaulted(
         TargetDiscoveryRequestId RequestId,
-        Exception Cause);
+        Exception Cause,
+        Task? Release = null);
+
+    private sealed record DiscoveryReleased(Task Release);
 
     /// <summary>
     /// Reports cancellation callback failure back to the actor thread.
@@ -458,17 +551,49 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     /// one running discovery.
     /// </summary>
     // Internal so resource lifetime can be tested without actor timing.
-    internal sealed class DiscoveryOperation(
-        CancellationTokenSource cancellation,
-        ICancelable timeout,
-        Task execution)
-        : IAsyncDisposable
+    internal sealed class DiscoveryOperation : IAsyncDisposable
     {
-        private ICancelable _timeout = timeout;
+        private const int CancellationFirst = 1;
+        private const int FailureFirst = 2;
+        private readonly CancellationTokenSource _cancellationSource;
+        private ICancelable _timeout;
         private Task _cancellation = Task.CompletedTask;
+        private int _terminalOrder;
         private bool _isDisposed;
 
+        public DiscoveryOperation(
+            CancellationTokenSource cancellation,
+            ICancelable timeout,
+            Task execution)
+        {
+            _cancellationSource = cancellation;
+            _timeout = timeout;
+            Execution = execution;
+            _ = execution.ContinueWith(
+                static (completed, state) =>
+                {
+                    if (!completed.IsCompletedSuccessfully)
+                    {
+                        Interlocked.CompareExchange(
+                            ref ((DiscoveryOperation)state!)._terminalOrder,
+                            FailureFirst,
+                            comparand: 0);
+                    }
+                },
+                this,
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
         public bool CancellationRequested { get; private set; }
+
+        public bool UnsuccessfulCompletionPrecededCancellation =>
+            Volatile.Read(ref _terminalOrder) == FailureFirst;
+
+        public Task Cancellation => _cancellation;
+
+        public Task Execution { get; }
 
         public bool CancellationExpired { get; set; }
 
@@ -481,8 +606,20 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
                 return false;
             }
 
+            if (Execution.IsCompleted
+                && !Execution.IsCompletedSuccessfully)
+            {
+                Interlocked.CompareExchange(
+                    ref _terminalOrder,
+                    FailureFirst,
+                    comparand: 0);
+            }
+            Interlocked.CompareExchange(
+                ref _terminalOrder,
+                CancellationFirst,
+                comparand: 0);
             CancellationRequested = true;
-            _cancellation = cancellation.CancelAsync();
+            _cancellation = _cancellationSource.CancelAsync();
             cancellationTask = _cancellation;
             return true;
         }
@@ -509,11 +646,16 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
             ReleaseTimeout();
             _isDisposed = true;
-            await execution.ConfigureAwait(
+            await Execution.ConfigureAwait(
                 ConfigureAwaitOptions.SuppressThrowing);
-            await _cancellation.ConfigureAwait(
-                ConfigureAwaitOptions.SuppressThrowing);
-            cancellation.Dispose();
+            try
+            {
+                await _cancellation.ConfigureAwait(false);
+            }
+            finally
+            {
+                _cancellationSource.Dispose();
+            }
         }
 
         private void DisposeTimeout()

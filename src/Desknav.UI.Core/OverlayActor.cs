@@ -11,6 +11,8 @@ namespace Desknav.UI;
 public sealed class OverlayActor : ReceiveActor
 {
     private readonly IOverlayRenderer _renderer;
+    private readonly TaskCompletionSource<bool> _shutdown;
+    private readonly Action<Exception> _reportFailure;
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly Dictionary<
         PresentationRevision,
@@ -22,9 +24,14 @@ public sealed class OverlayActor : ReceiveActor
     private ActivePresentation? _active;
     private bool _isTerminating;
 
-    public OverlayActor(IOverlayRenderer renderer)
+    public OverlayActor(
+        IOverlayRenderer renderer,
+        TaskCompletionSource<bool> shutdown,
+        Action<Exception> reportFailure)
     {
         _renderer = renderer;
+        _shutdown = shutdown;
+        _reportFailure = reportFailure;
 
         Receive<ApplyTargetPresentation>(Handle);
         Receive<PreparationFinished>(Handle);
@@ -36,46 +43,26 @@ public sealed class OverlayActor : ReceiveActor
         Receive<ReleaseFaulted>(Handle);
     }
 
-    public static Props CreateProps(IOverlayRenderer renderer)
+    public static Props CreateProps(
+        IOverlayRenderer renderer,
+        Action<Exception> reportFailure,
+        out Task shutdown)
     {
         ArgumentNullException.ThrowIfNull(renderer);
-        return Props.Create(() => new OverlayActor(renderer));
+        ArgumentNullException.ThrowIfNull(reportFailure);
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        shutdown = completion.Task;
+        return Props.Create(
+            () => new OverlayActor(
+                renderer,
+                completion,
+                reportFailure));
     }
 
     protected override void PostStop()
     {
-        foreach (var operation in _preparations.Values)
-        {
-            _ = ReleasePreparationDuringShutdownAsync(operation);
-        }
-        _preparations.Clear();
-
-        if (_ready is { } ready)
-        {
-            _ready = null;
-            _ = ReleaseSceneDuringShutdownAsync(ready.Scene);
-        }
-
-        if (_activation is { } activation)
-        {
-            _activation = null;
-            var activeScene = _active?.Scene;
-            _active = null;
-            _ = ReleaseActivationDuringShutdownAsync(
-                activation,
-                activeScene);
-        }
-        else if (_active is { } active)
-        {
-            _active = null;
-            _ = ReleaseSceneDuringShutdownAsync(active.Scene);
-        }
-
-        foreach (var release in _releases)
-        {
-            _ = ObserveReleaseDuringShutdownAsync(release);
-        }
-        _releases.Clear();
+        CompleteShutdown();
 
         base.PostStop();
     }
@@ -188,7 +175,8 @@ public sealed class OverlayActor : ReceiveActor
         }
 
         ReleasePreparation(operation);
-        if (operation.CancellationRequested)
+        if (operation.CancellationRequested
+            && !operation.UnsuccessfulCompletionPrecededCancellation)
         {
             _log.Debug(
                 faulted.Cause,
@@ -348,14 +336,92 @@ public sealed class OverlayActor : ReceiveActor
         string message,
         params object[] arguments)
     {
+        _reportFailure(cause);
         if (_isTerminating)
         {
             return;
         }
-
         _isTerminating = true;
         _log.Error(cause, message, arguments);
-        Context.System.Terminate();
+    }
+
+    private Task CleanupAsync()
+    {
+        var cleanups = new List<Task>(
+            (_preparations.Count * 2) + _releases.Count + 2);
+        foreach (var operation in _preparations.Values)
+        {
+            try
+            {
+                operation.RequestCancellation();
+            }
+            catch (Exception exception)
+            {
+                cleanups.Add(Task.FromException(exception));
+            }
+        }
+
+        cleanups.AddRange(
+            _preparations.Values.Select(
+                ReleasePreparationDuringShutdownAsync));
+        _preparations.Clear();
+
+        if (_ready is { } ready)
+        {
+            _ready = null;
+            cleanups.Add(DisposeResourceAsync(ready.Scene));
+        }
+
+        if (_activation is { } activation)
+        {
+            _activation = null;
+            var activeScene = _active?.Scene;
+            _active = null;
+            cleanups.Add(
+                ReleaseActivationDuringShutdownAsync(
+                    activation,
+                    activeScene));
+        }
+        else if (_active is { } active)
+        {
+            _active = null;
+            cleanups.Add(DisposeResourceAsync(active.Scene));
+        }
+
+        cleanups.AddRange(_releases);
+        _releases.Clear();
+        return AwaitCleanupAsync(cleanups);
+    }
+
+    private void CompleteShutdown()
+    {
+        try
+        {
+            _ = CompleteShutdownAsync(CleanupAsync());
+        }
+        catch (Exception exception)
+        {
+            _shutdown.TrySetException(exception);
+        }
+    }
+
+    private async Task CompleteShutdownAsync(Task cleanup)
+    {
+        await cleanup.ConfigureAwait(
+            ConfigureAwaitOptions.SuppressThrowing);
+        if (cleanup.IsFaulted)
+        {
+            _shutdown.TrySetException(
+                cleanup.Exception!.Flatten().InnerExceptions);
+        }
+        else if (cleanup.IsCanceled)
+        {
+            _shutdown.TrySetCanceled();
+        }
+        else
+        {
+            _shutdown.TrySetResult(true);
+        }
     }
 
     private static async Task ObserveCancellationAsync(
@@ -379,110 +445,128 @@ public sealed class OverlayActor : ReceiveActor
         PreparationOperation operation)
     {
         IPreparedScene? scene = null;
-        try
+        var failures = new List<Exception>();
+        await ((Task)operation.Execution).ConfigureAwait(
+            ConfigureAwaitOptions.SuppressThrowing);
+        if (!operation.Execution.IsCompletedSuccessfully)
         {
-            operation.RequestCancellation();
-
-            await operation.Cancellation.ConfigureAwait(
-                ConfigureAwaitOptions.SuppressThrowing);
-            if (operation.Cancellation.IsFaulted)
+            if (operation.UnsuccessfulCompletionPrecededCancellation)
             {
-                _log.Error(
-                    operation.Cancellation.Exception,
-                    "Presentation cancellation failed during shutdown.");
+                if (operation.Execution.Exception is { } exception)
+                {
+                    failures.Add(exception);
+                }
+                else
+                {
+                    failures.Add(
+                        new TaskCanceledException(operation.Execution));
+                }
             }
-
-            await ((Task)operation.Execution).ConfigureAwait(
-                ConfigureAwaitOptions.SuppressThrowing);
-            if (operation.Execution.IsFaulted)
+            else
             {
                 _log.Debug(
-                    operation.Execution.Exception,
-                    "Canceled presentation preparation faulted during"
-                    + " shutdown.");
-            }
-
-            if (operation.Execution.Status == TaskStatus.RanToCompletion)
-            {
-                scene = operation.Execution.Result;
-            }
-        }
-        catch (Exception exception)
-        {
-            _log.Error(
-                exception,
-                "Presentation preparation cleanup failed during shutdown.");
-        }
-        finally
-        {
-            if (scene is not null)
-            {
-                await ReleaseSceneDuringShutdownAsync(scene)
-                    .ConfigureAwait(false);
-            }
-
-            try
-            {
-                await operation.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                _log.Error(
-                    exception,
-                    "Presentation preparation release failed during"
+                    "Canceled presentation preparation ended during"
                     + " shutdown.");
             }
         }
+
+        if (operation.Execution.Status == TaskStatus.RanToCompletion)
+        {
+            scene = operation.Execution.Result;
+        }
+
+        if (scene is not null)
+        {
+            await CaptureFailureAsync(
+                    failures,
+                    () => DisposeResourceAsync(scene))
+                .ConfigureAwait(false);
+        }
+
+        await CaptureFailureAsync(
+                failures,
+                async () => await operation
+                    .DisposeAsync()
+                    .ConfigureAwait(false))
+            .ConfigureAwait(false);
+
+        ThrowIfCleanupFailed(failures);
     }
 
     private async Task ReleaseActivationDuringShutdownAsync(
         ActivationOperation operation,
         IPreparedScene? activeScene)
     {
+        var failures = new List<Exception>();
         await operation.Execution.ConfigureAwait(
             ConfigureAwaitOptions.SuppressThrowing);
-        if (operation.Execution.IsFaulted)
+        if (operation.Execution.Exception is { } exception)
         {
-            _log.Error(
-                operation.Execution.Exception,
-                "Presentation activation faulted during shutdown.");
+            failures.Add(exception);
+        }
+        else if (operation.Execution.IsCanceled)
+        {
+            failures.Add(
+                new TaskCanceledException(operation.Execution));
         }
 
-        await ReleaseSceneDuringShutdownAsync(operation.Scene)
+        await CaptureFailureAsync(
+                failures,
+                () => DisposeResourceAsync(operation.Scene))
             .ConfigureAwait(false);
         if (activeScene is not null)
         {
-            await ReleaseSceneDuringShutdownAsync(activeScene)
+            await CaptureFailureAsync(
+                    failures,
+                    () => DisposeResourceAsync(activeScene))
                 .ConfigureAwait(false);
         }
+
+        ThrowIfCleanupFailed(failures);
     }
 
-    private async Task ReleaseSceneDuringShutdownAsync(
-        IPreparedScene scene)
+    private static async Task CaptureFailureAsync(
+        List<Exception> failures,
+        Func<Task> cleanup)
     {
         try
         {
-            await scene.DisposeAsync().ConfigureAwait(false);
+            await cleanup().ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            _log.Error(
-                exception,
-                "Overlay scene cleanup failed during shutdown.");
+            failures.Add(exception);
         }
     }
 
-    private async Task ObserveReleaseDuringShutdownAsync(Task release)
+    private static async Task AwaitCleanupAsync(
+        IReadOnlyCollection<Task> cleanups)
     {
-        try
+        await Task.WhenAll(cleanups).ConfigureAwait(
+            ConfigureAwaitOptions.SuppressThrowing);
+        var failures = new List<Exception>();
+        foreach (var cleanup in cleanups)
         {
-            await release.ConfigureAwait(false);
+            if (cleanup.Exception is { } exception)
+            {
+                failures.AddRange(exception.InnerExceptions);
+            }
+            else if (cleanup.IsCanceled)
+            {
+                failures.Add(new TaskCanceledException(cleanup));
+            }
         }
-        catch (Exception exception)
+
+        ThrowIfCleanupFailed(failures);
+    }
+
+    private static void ThrowIfCleanupFailed(List<Exception> failures)
+    {
+        if (failures.Count > 0)
         {
-            _log.Error(
-                exception,
-                "Overlay resource release failed during shutdown.");
+            throw new AggregateException(
+                "Overlay cleanup failed.",
+                failures);
         }
     }
 
@@ -530,19 +614,46 @@ public sealed class OverlayActor : ReceiveActor
         Task ReleaseTask,
         Exception Cause);
 
-    private sealed class PreparationOperation(
-        CancellationTokenSource cancellation,
-        Task<IPreparedScene> execution)
-        : IAsyncDisposable
+    private sealed class PreparationOperation : IAsyncDisposable
     {
+        private const int CancellationFirst = 1;
+        private const int FailureFirst = 2;
+        private readonly CancellationTokenSource _cancellationSource;
         private Task _cancellation = Task.CompletedTask;
+        private int _terminalOrder;
         private bool _isDisposed;
 
-        public Task<IPreparedScene> Execution { get; } = execution;
+        public PreparationOperation(
+            CancellationTokenSource cancellation,
+            Task<IPreparedScene> execution)
+        {
+            _cancellationSource = cancellation;
+            Execution = execution;
+            _ = execution.ContinueWith(
+                static (completed, state) =>
+                {
+                    if (!completed.IsCompletedSuccessfully)
+                    {
+                        Interlocked.CompareExchange(
+                            ref ((PreparationOperation)state!)._terminalOrder,
+                            FailureFirst,
+                            comparand: 0);
+                    }
+                },
+                this,
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        public Task<IPreparedScene> Execution { get; }
 
         public Task Cancellation => _cancellation;
 
         public bool CancellationRequested { get; private set; }
+
+        public bool UnsuccessfulCompletionPrecededCancellation =>
+            Volatile.Read(ref _terminalOrder) == FailureFirst;
 
         public bool RequestCancellation()
         {
@@ -551,8 +662,20 @@ public sealed class OverlayActor : ReceiveActor
                 return false;
             }
 
+            if (Execution.IsCompleted
+                && !Execution.IsCompletedSuccessfully)
+            {
+                Interlocked.CompareExchange(
+                    ref _terminalOrder,
+                    FailureFirst,
+                    comparand: 0);
+            }
+            Interlocked.CompareExchange(
+                ref _terminalOrder,
+                CancellationFirst,
+                comparand: 0);
             CancellationRequested = true;
-            _cancellation = cancellation.CancelAsync();
+            _cancellation = _cancellationSource.CancelAsync();
             return true;
         }
 
@@ -566,9 +689,14 @@ public sealed class OverlayActor : ReceiveActor
             _isDisposed = true;
             await ((Task)Execution).ConfigureAwait(
                 ConfigureAwaitOptions.SuppressThrowing);
-            await _cancellation.ConfigureAwait(
-                ConfigureAwaitOptions.SuppressThrowing);
-            cancellation.Dispose();
+            try
+            {
+                await _cancellation.ConfigureAwait(false);
+            }
+            finally
+            {
+                _cancellationSource.Dispose();
+            }
         }
     }
 }

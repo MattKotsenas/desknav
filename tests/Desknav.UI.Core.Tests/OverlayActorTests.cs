@@ -288,6 +288,26 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
+    public async Task PreparationFailureBeforeSupersessionTerminatesActorSystem()
+    {
+        await using var harness = new ActorHarness();
+        harness.Renderer.FailPreparationSynchronously(
+            new InvalidOperationException("Preparation failed."));
+
+        harness.Apply(
+            PresentationRevision.From(1),
+            VisiblePresentation());
+        harness.Apply(
+            PresentationRevision.From(2),
+            VisiblePresentation());
+        var current =
+            (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
+        current.Complete();
+
+        await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
+    }
+
+    [Fact]
     public async Task ActivationFailureTerminatesActorSystem()
     {
         await using var harness = new ActorHarness();
@@ -406,6 +426,79 @@ public sealed class OverlayActorTests
         Assert.Same(
             preparation.Scene,
             (await harness.Renderer.ReadEventAsync<SceneDisposed>()).Scene);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
+    }
+
+    [Fact]
+    public async Task ShutdownTaskWaitsForPreparationCleanup()
+    {
+        await using var harness = new ActorHarness();
+
+        harness.Apply(
+            PresentationRevision.From(1),
+            VisiblePresentation());
+        var preparation =
+            (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
+
+        harness.Actor.Tell(PoisonPill.Instance);
+        await harness.Renderer.ReadEventAsync<PreparationCanceled>();
+        Assert.False(harness.Shutdown.IsCompleted);
+
+        preparation.Complete();
+
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
+    }
+
+    [Fact]
+    public async Task ShutdownTaskReportsCancellationCallbackFailure()
+    {
+        await using var harness = new ActorHarness();
+        harness.Renderer.FailCancellation(
+            new InvalidOperationException("Cancellation failed."));
+
+        harness.Apply(
+            PresentationRevision.From(1),
+            VisiblePresentation());
+        var preparation =
+            (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
+
+        harness.Actor.Tell(PoisonPill.Instance);
+        await harness.Renderer.ReadEventAsync<PreparationCanceled>();
+        preparation.Complete();
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => harness.Shutdown.WaitAsync(harness.TimeoutToken));
+        Assert.Contains(
+            harness.Shutdown.Exception!
+                .Flatten()
+                .InnerExceptions,
+            failure => failure
+                .ToString()
+                .Contains(
+                    "Cancellation failed.",
+                    StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ShutdownTaskReportsSceneDisposalFailure()
+    {
+        await using var harness = new ActorHarness();
+        var active = await harness.ApplyCompletelyAsync(
+            PresentationRevision.From(1),
+            VisiblePresentation());
+        active.Scene.FailDisposal(
+            new InvalidOperationException("Scene disposal failed."));
+
+        harness.Actor.Tell(PoisonPill.Instance);
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => harness.Shutdown.WaitAsync(harness.TimeoutToken));
+        Assert.Equal(
+            "Scene disposal failed.",
+            Assert.Single(
+                harness.Shutdown.Exception!
+                    .Flatten()
+                    .InnerExceptions).Message);
     }
 
     [Fact]
@@ -483,6 +576,7 @@ public sealed class OverlayActorTests
         next.Complete();
         next.Scene.FailDisposal(
             new InvalidOperationException("Incoming disposal failed."));
+        active.Scene.CancelDisposal();
         var activation =
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
 
@@ -500,6 +594,16 @@ public sealed class OverlayActorTests
 
         Assert.Contains(active.Scene, disposed);
         Assert.Contains(next.Scene, disposed);
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => harness.Shutdown.WaitAsync(harness.TimeoutToken));
+        Assert.Collection(
+            harness.Shutdown.Exception!
+                .Flatten()
+                .InnerExceptions,
+            failure => Assert.Equal(
+                "Incoming disposal failed.",
+                failure.Message),
+            failure => Assert.IsType<TaskCanceledException>(failure));
     }
 
     [Fact]
@@ -551,7 +655,12 @@ public sealed class OverlayActorTests
                 Props.Create(
                     () => new RecordingActor(
                         _acknowledgements.Writer)));
-            Actor = System.ActorOf(OverlayActor.CreateProps(Renderer));
+            var props = OverlayActor.CreateProps(
+                Renderer,
+                _ => System.Terminate(),
+                out var shutdown);
+            Shutdown = shutdown;
+            Actor = System.ActorOf(props);
         }
 
         public ActorSystem System { get; }
@@ -559,6 +668,8 @@ public sealed class OverlayActorTests
         public IActorRef Actor { get; }
 
         public ControllableOverlayRenderer Renderer { get; }
+
+        public Task Shutdown { get; }
 
         public CancellationToken TimeoutToken => _timeout.Token;
 
