@@ -180,7 +180,10 @@ observed control and treats one as eligible when it is
 enabled, on screen, has finite positive bounds, and supports Invoke, Toggle,
 SelectionItem, or ExpandCollapse. Its target dump is a thin diagnostic
 projection of that same capture, including exclusions and unavailable
-properties. UI Automation bounds remain physical screen pixels.
+properties. UI Automation bounds remain physical screen pixels. The UI
+Automation discovery adapter maps each eligible bound outward to an integer
+`PhysicalRect`, assigns snapshot-local target identities, and fails the whole
+discovery when it cannot produce a complete target set.
 
 Controls in a minimized captured window are not eligible, even when their
 provider reports them as on screen. Bounds must intersect a physical display.

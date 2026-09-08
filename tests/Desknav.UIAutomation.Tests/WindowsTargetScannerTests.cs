@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
+using Desknav.ControlPlane;
+
 using Desknav.UIAutomation;
 
 namespace Desknav.UIAutomation.Tests;
@@ -168,6 +170,47 @@ public sealed class WindowsTargetScannerTests
     }
 
     [Fact]
+    public async Task DiscoveryMapsEligibleForegroundFixtureTargets()
+    {
+        await using var fixture = await FixtureProcess.StartAsync(
+            TestContext.Current.CancellationToken);
+        var scanner = new WindowsTargetScanner(
+            maximumDepth: 128,
+            maximumElements: 10_000,
+            foregroundWindow: () => new nint(fixture.WindowHandle));
+        var capture = await scanner.CaptureForegroundWindowAsync(
+            TestContext.Current.CancellationToken);
+        var expected = capture.Elements
+            .Where(static element => element.IsEligible)
+            .Select(
+                static element =>
+                    OutwardRect(
+                        Assert.IsType<PhysicalBounds>(
+                            element.Bounds)))
+            .Order()
+            .ToArray();
+        var discovery = new WindowsTargetDiscovery(scanner);
+
+        var result = await discovery.DiscoverAsync(
+            TestContext.Current.CancellationToken);
+
+        var succeeded =
+            Assert.IsType<TargetDiscoveryResult.Succeeded>(result);
+        Assert.Equal(
+            expected,
+            succeeded.Targets
+                .Select(static target => target.Bounds)
+                .Order()
+                .ToArray());
+        Assert.Equal(
+            succeeded.Targets.Length,
+            succeeded.Targets
+                .Select(static target => target.Id)
+                .Distinct()
+                .Count());
+    }
+
+    [Fact]
     public async Task MinimizedWindowControlsAreIneligible()
     {
         await using var fixture = await FixtureProcess.StartAsync(
@@ -228,7 +271,7 @@ public sealed class WindowsTargetScannerTests
             maximumDepth: 128,
             maximumElements: 1);
         var elementException =
-            await Assert.ThrowsAsync<InvalidOperationException>(
+            await Assert.ThrowsAnyAsync<InvalidOperationException>(
                 () => elementLimit.CaptureWindowAsync(
                     fixture.WindowHandle,
                     TestContext.Current.CancellationToken));
@@ -241,7 +284,7 @@ public sealed class WindowsTargetScannerTests
             maximumDepth: 1,
             maximumElements: 10_000);
         var depthException =
-            await Assert.ThrowsAsync<InvalidOperationException>(
+            await Assert.ThrowsAnyAsync<InvalidOperationException>(
                 () => depthLimit.CaptureWindowAsync(
                     fixture.WindowHandle,
                     TestContext.Current.CancellationToken));
@@ -362,6 +405,19 @@ public sealed class WindowsTargetScannerTests
 #else
         "Release";
 #endif
+
+    private static PhysicalRect OutwardRect(PhysicalBounds bounds)
+    {
+        var left = (int)Math.Floor(bounds.Left);
+        var top = (int)Math.Floor(bounds.Top);
+        var right = (int)Math.Ceiling(bounds.Right);
+        var bottom = (int)Math.Ceiling(bounds.Bottom);
+        return new PhysicalRect(
+            left,
+            top,
+            right - left,
+            bottom - top);
+    }
 
     private static async Task<string> SerializeAsync(
         UiAutomationCapture capture)

@@ -15,6 +15,7 @@
     <ProjectReference Include="..\..\src\Desknav.UIAutomation\Desknav.UIAutomation.csproj" />
     <ProjectReference Include="..\Desknav.UIAutomation.Fixture\Desknav.UIAutomation.Fixture.csproj" />
     <ProjectReference Include="..\..\src\Desknav.TargetDump\Desknav.TargetDump.csproj" />
+    <ProjectReference Include="..\..\src\Desknav.ControlPlane\Desknav.ControlPlane.csproj" />
   </ItemGroup>
 
   <ItemGroup>
