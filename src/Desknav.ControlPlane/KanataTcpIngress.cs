@@ -10,11 +10,6 @@ public sealed class KanataTcpIngress
     private readonly IPEndPoint _endpoint;
     private readonly IKanataFrameParser _frameParser;
 
-    public KanataTcpIngress(IPEndPoint endpoint)
-        : this(endpoint, new KanataFrameParser())
-    {
-    }
-
     public KanataTcpIngress(
         IPEndPoint endpoint,
         IKanataFrameParser frameParser)

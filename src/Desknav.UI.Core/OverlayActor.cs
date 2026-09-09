@@ -175,11 +175,18 @@ public sealed class OverlayActor : ReceiveActor
             faulted.Revision);
     }
 
-    private void Handle(CancellationFailed failed) =>
+    private void Handle(CancellationFailed failed)
+    {
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
         StopApplication(
             failed.Cause,
             "Cancellation of presentation preparation {0} failed.",
             failed.Revision);
+    }
 
     private void TryActivate()
     {
@@ -303,6 +310,11 @@ public sealed class OverlayActor : ReceiveActor
     private void Handle(ReleaseFaulted faulted)
     {
         _releases.Remove(faulted.ReleaseTask);
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
         StopApplication(
             faulted.Cause,
             "Release of an overlay resource faulted unexpectedly.");

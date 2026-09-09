@@ -48,18 +48,23 @@ internal sealed class ControllableTargetDiscovery : ITargetDiscovery
         DiscoveryCall? call = null;
         try
         {
-            if (_throwOnCancellation)
+            if (_throwOnCancellation || _blockCancellationCallback)
             {
                 cancellationToken.Register(
-                    () => throw new InvalidOperationException(
-                        "Cancellation callback failed."));
-            }
-            else if (_blockCancellationCallback)
-            {
-                cancellationToken.Register(
-                    () => _callbackRelease.Task
-                        .GetAwaiter()
-                        .GetResult());
+                    () =>
+                    {
+                        if (_blockCancellationCallback)
+                        {
+                            _callbackRelease.Task
+                                .GetAwaiter()
+                                .GetResult();
+                        }
+                        if (_throwOnCancellation)
+                        {
+                            throw new InvalidOperationException(
+                                "Cancellation callback failed.");
+                        }
+                    });
             }
 
             call = new DiscoveryCall(

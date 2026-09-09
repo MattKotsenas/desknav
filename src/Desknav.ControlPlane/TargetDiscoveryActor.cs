@@ -40,6 +40,7 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         Receive<DiscoveryFinished>(Handle);
         Receive<DiscoveryFaulted>(Handle);
         Receive<DiscoveryReleased>(Handle);
+        Receive<DiscoveryReleaseFaulted>(Handle);
         Receive<CancellationFailed>(Handle);
         Receive<OperationTimedOut>(Handle);
         Receive<CancellationTimedOut>(Handle);
@@ -189,11 +190,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             ReleaseOperation(faulted.RequestId, operation);
         }
 
-        if (faulted.Release is { } release)
-        {
-            _releases.Remove(release);
-        }
-
         if (_isShuttingDown)
         {
             return;
@@ -219,11 +215,18 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             faulted.RequestId);
     }
 
-    private void Handle(CancellationFailed failed) =>
+    private void Handle(CancellationFailed failed)
+    {
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
         StopApplication(
             failed.Cause,
             "Cancellation of target discovery request {0} failed.",
             failed.RequestId);
+    }
 
     private void Handle(OperationTimedOut timedOut)
     {
@@ -382,14 +385,29 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             Self,
             Self,
             () => new DiscoveryReleased(release),
-            exception => new DiscoveryFaulted(
+            exception => new DiscoveryReleaseFaulted(
                 requestId,
-                exception,
-                release));
+                release,
+                exception));
     }
 
     private void Handle(DiscoveryReleased released) =>
         _releases.Remove(released.Release);
+
+    private void Handle(DiscoveryReleaseFaulted faulted)
+    {
+        _releases.Remove(faulted.Release);
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
+        StopApplication(
+            faulted.Cause,
+            "Release of target discovery request {0} faulted"
+            + " unexpectedly.",
+            faulted.RequestId);
+    }
 
     private static async Task ObserveCancellationAsync(
         TargetDiscoveryRequestId requestId,
@@ -506,10 +524,14 @@ public sealed class TargetDiscoveryActor : ReceiveActor
     /// </summary>
     private sealed record DiscoveryFaulted(
         TargetDiscoveryRequestId RequestId,
-        Exception Cause,
-        Task? Release = null);
+        Exception Cause);
 
     private sealed record DiscoveryReleased(Task Release);
+
+    private sealed record DiscoveryReleaseFaulted(
+        TargetDiscoveryRequestId RequestId,
+        Task Release,
+        Exception Cause);
 
     /// <summary>
     /// Reports cancellation callback failure back to the actor thread.

@@ -17,7 +17,9 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
     private readonly CancellationToken _timeout;
     private readonly ConcurrentQueue<PreparedScene> _activations = [];
     private readonly ConcurrentQueue<PreparationCall> _preparations = [];
+    private readonly TaskCompletionSource _cancellationRelease = new();
     private int _activationInProgress;
+    private bool _blockCancellation;
     private Exception? _cancellationFailure;
     private Exception? _synchronousActivationFailure;
     private Exception? _synchronousPreparationFailure;
@@ -40,6 +42,12 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
 
     public void FailCancellation(Exception exception) =>
         Volatile.Write(ref _cancellationFailure, exception);
+
+    public void BlockCancellation() =>
+        Volatile.Write(ref _blockCancellation, true);
+
+    public void ReleaseCancellation() =>
+        _cancellationRelease.TrySetResult();
 
     public void FailPreparationSynchronously(Exception exception) =>
         Volatile.Write(ref _synchronousPreparationFailure, exception);
@@ -79,15 +87,28 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
         _preparations.Enqueue(call);
         WriteEvent(new PreparationStarted(call));
 
-        using var registration = cancellationToken.Register(
-            () =>
-            {
-                WriteEvent(new PreparationCanceled(call));
-                if (Volatile.Read(ref _cancellationFailure) is { } failure)
+        if (Volatile.Read(ref _blockCancellation)
+            || Volatile.Read(ref _cancellationFailure) is not null)
+        {
+            cancellationToken.Register(
+                () =>
                 {
-                    throw failure;
-                }
-            });
+                    if (Volatile.Read(ref _blockCancellation))
+                    {
+                        _cancellationRelease.Task
+                            .GetAwaiter()
+                            .GetResult();
+                    }
+                    if (Volatile.Read(
+                            ref _cancellationFailure) is { } failure)
+                    {
+                        throw failure;
+                    }
+                });
+        }
+
+        using var registration = cancellationToken.Register(
+            () => WriteEvent(new PreparationCanceled(call)));
         try
         {
             return await call.Completion.ConfigureAwait(false);

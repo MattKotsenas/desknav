@@ -475,6 +475,47 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
+    public async Task ShutdownOwnsPendingCancellationFailure()
+    {
+        await using var harness = new ActorHarness();
+        harness.Renderer.BlockCancellation();
+        harness.Renderer.FailCancellation(
+            new InvalidOperationException("Cancellation failed."));
+
+        harness.Apply(
+            PresentationRevision.From(1),
+            VisiblePresentation());
+        var first =
+            (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
+        harness.Apply(
+            PresentationRevision.From(2),
+            VisiblePresentation());
+        var (_, second) =
+            await harness.Renderer.ReadCancellationAndStartAsync();
+        first.Complete();
+        await first.ExecutionEnded;
+        await harness.FlushActorAsync();
+        await harness.Renderer.ReadEventAsync<SceneDisposed>();
+
+        harness.BeginShutdown();
+        await harness.Renderer.ReadEventAsync<PreparationCanceled>();
+        harness.Renderer.ReleaseCancellation();
+        second.Complete();
+
+        var failure = await harness.Failure.WaitAsync(harness.TimeoutToken);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
+        var failures = Assert.IsType<AggregateException>(failure.Cause)
+            .Flatten()
+            .InnerExceptions;
+        Assert.Equal(2, failures.Count);
+        Assert.All(
+            failures,
+            exception => Assert.Equal(
+                "Cancellation failed.",
+                exception.Message));
+    }
+
+    [Fact]
     public async Task ShutdownReportsSceneDisposalFailure()
     {
         await using var harness = new ActorHarness();
