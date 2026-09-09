@@ -33,8 +33,7 @@ public sealed class NavigationCoordinatorRoutingTests
                     RecordingActor.CreateProps(
                         targetDiscovery.Writer),
                     ActorRefs.Nobody,
-                    overlayOwner,
-                    _ => system.Terminate()));
+                    overlayOwner));
             var connectionId = KanataConnectionId.New();
 
             coordinator.Tell(

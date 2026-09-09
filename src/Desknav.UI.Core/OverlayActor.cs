@@ -11,8 +11,6 @@ namespace Desknav.UI;
 public sealed class OverlayActor : ReceiveActor
 {
     private readonly IOverlayRenderer _renderer;
-    private readonly TaskCompletionSource<bool> _shutdown;
-    private readonly Action<Exception> _reportFailure;
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly Dictionary<
         PresentationRevision,
@@ -22,16 +20,12 @@ public sealed class OverlayActor : ReceiveActor
     private ReadyPresentation? _ready;
     private ActivationOperation? _activation;
     private ActivePresentation? _active;
+    private bool _isShuttingDown;
     private bool _isTerminating;
 
-    public OverlayActor(
-        IOverlayRenderer renderer,
-        TaskCompletionSource<bool> shutdown,
-        Action<Exception> reportFailure)
+    public OverlayActor(IOverlayRenderer renderer)
     {
         _renderer = renderer;
-        _shutdown = shutdown;
-        _reportFailure = reportFailure;
 
         Receive<ApplyTargetPresentation>(Handle);
         Receive<PreparationFinished>(Handle);
@@ -41,30 +35,15 @@ public sealed class OverlayActor : ReceiveActor
         Receive<ActivationFaulted>(Handle);
         Receive<ReleaseCompleted>(Handle);
         Receive<ReleaseFaulted>(Handle);
+        Receive<PrepareForShutdown>(Handle);
+        Receive<ShutdownCleanupCompleted>(_ => Context.Stop(Self));
+        Receive<ShutdownCleanupFaulted>(Handle);
     }
 
-    public static Props CreateProps(
-        IOverlayRenderer renderer,
-        Action<Exception> reportFailure,
-        out Task shutdown)
+    public static Props CreateProps(IOverlayRenderer renderer)
     {
         ArgumentNullException.ThrowIfNull(renderer);
-        ArgumentNullException.ThrowIfNull(reportFailure);
-        var completion = new TaskCompletionSource<bool>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        shutdown = completion.Task;
-        return Props.Create(
-            () => new OverlayActor(
-                renderer,
-                completion,
-                reportFailure));
-    }
-
-    protected override void PostStop()
-    {
-        CompleteShutdown();
-
-        base.PostStop();
+        return Props.Create(() => new OverlayActor(renderer));
     }
 
     private void Handle(ApplyTargetPresentation apply)
@@ -147,7 +126,10 @@ public sealed class OverlayActor : ReceiveActor
                 finished.Revision,
                 out var operation))
         {
-            ReleaseScene(finished.Scene);
+            if (!_isTerminating)
+            {
+                ReleaseScene(finished.Scene);
+            }
             return;
         }
 
@@ -175,8 +157,9 @@ public sealed class OverlayActor : ReceiveActor
         }
 
         ReleasePreparation(operation);
-        if (operation.CancellationRequested
-            && !operation.UnsuccessfulCompletionPrecededCancellation)
+        if (IsExpectedCancellation(
+                faulted.Cause,
+                operation.CancellationToken))
         {
             _log.Debug(
                 faulted.Cause,
@@ -236,6 +219,11 @@ public sealed class OverlayActor : ReceiveActor
 
     private void Handle(ActivationFinished finished)
     {
+        if (_isShuttingDown && _activation is null)
+        {
+            return;
+        }
+
         if (_activation is not { } activation
             || activation.Revision != finished.Revision)
         {
@@ -268,6 +256,11 @@ public sealed class OverlayActor : ReceiveActor
 
     private void Handle(ActivationFaulted faulted)
     {
+        if (_isShuttingDown && _activation is null)
+        {
+            return;
+        }
+
         if (_activation?.Revision != faulted.Revision)
         {
             var cause = new InvalidOperationException(
@@ -336,13 +329,46 @@ public sealed class OverlayActor : ReceiveActor
         string message,
         params object[] arguments)
     {
-        _reportFailure(cause);
+        Context.Parent.Tell(new RuntimeFailure(cause));
         if (_isTerminating)
         {
             return;
         }
         _isTerminating = true;
         _log.Error(cause, message, arguments);
+    }
+
+    private void Handle(PrepareForShutdown _)
+    {
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
+        _isShuttingDown = true;
+        _isTerminating = true;
+        Task cleanup;
+        try
+        {
+            cleanup = CleanupAsync();
+        }
+        catch (Exception exception)
+        {
+            cleanup = Task.FromException(exception);
+        }
+
+        cleanup.PipeTo(
+            Self,
+            Self,
+            () => new ShutdownCleanupCompleted(),
+            exception => new ShutdownCleanupFaulted(exception));
+    }
+
+    private void Handle(ShutdownCleanupFaulted faulted)
+    {
+        Context.Parent.Tell(new RuntimeFailure(faulted.Cause));
+        _log.Error(faulted.Cause, "Overlay cleanup failed.");
+        Context.Stop(Self);
     }
 
     private Task CleanupAsync()
@@ -393,37 +419,6 @@ public sealed class OverlayActor : ReceiveActor
         return AwaitCleanupAsync(cleanups);
     }
 
-    private void CompleteShutdown()
-    {
-        try
-        {
-            _ = CompleteShutdownAsync(CleanupAsync());
-        }
-        catch (Exception exception)
-        {
-            _shutdown.TrySetException(exception);
-        }
-    }
-
-    private async Task CompleteShutdownAsync(Task cleanup)
-    {
-        await cleanup.ConfigureAwait(
-            ConfigureAwaitOptions.SuppressThrowing);
-        if (cleanup.IsFaulted)
-        {
-            _shutdown.TrySetException(
-                cleanup.Exception!.Flatten().InnerExceptions);
-        }
-        else if (cleanup.IsCanceled)
-        {
-            _shutdown.TrySetCanceled();
-        }
-        else
-        {
-            _shutdown.TrySetResult(true);
-        }
-    }
-
     private static async Task ObserveCancellationAsync(
         PresentationRevision revision,
         Task cancellation,
@@ -446,33 +441,24 @@ public sealed class OverlayActor : ReceiveActor
     {
         IPreparedScene? scene = null;
         var failures = new List<Exception>();
-        await ((Task)operation.Execution).ConfigureAwait(
-            ConfigureAwaitOptions.SuppressThrowing);
-        if (!operation.Execution.IsCompletedSuccessfully)
+        try
         {
-            if (operation.UnsuccessfulCompletionPrecededCancellation)
-            {
-                if (operation.Execution.Exception is { } exception)
-                {
-                    failures.Add(exception);
-                }
-                else
-                {
-                    failures.Add(
-                        new TaskCanceledException(operation.Execution));
-                }
-            }
-            else
+            scene = await operation.Execution.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            if (IsExpectedCancellation(
+                    exception,
+                    operation.CancellationToken))
             {
                 _log.Debug(
                     "Canceled presentation preparation ended during"
                     + " shutdown.");
             }
-        }
-
-        if (operation.Execution.Status == TaskStatus.RanToCompletion)
-        {
-            scene = operation.Execution.Result;
+            else
+            {
+                failures.Add(exception);
+            }
         }
 
         if (scene is not null)
@@ -614,13 +600,15 @@ public sealed class OverlayActor : ReceiveActor
         Task ReleaseTask,
         Exception Cause);
 
+    private sealed record ShutdownCleanupCompleted;
+
+    private sealed record ShutdownCleanupFaulted(Exception Cause);
+
     private sealed class PreparationOperation : IAsyncDisposable
     {
-        private const int CancellationFirst = 1;
-        private const int FailureFirst = 2;
         private readonly CancellationTokenSource _cancellationSource;
+        private readonly CancellationToken _cancellationToken;
         private Task _cancellation = Task.CompletedTask;
-        private int _terminalOrder;
         private bool _isDisposed;
 
         public PreparationOperation(
@@ -628,32 +616,18 @@ public sealed class OverlayActor : ReceiveActor
             Task<IPreparedScene> execution)
         {
             _cancellationSource = cancellation;
+            _cancellationToken = cancellation.Token;
             Execution = execution;
-            _ = execution.ContinueWith(
-                static (completed, state) =>
-                {
-                    if (!completed.IsCompletedSuccessfully)
-                    {
-                        Interlocked.CompareExchange(
-                            ref ((PreparationOperation)state!)._terminalOrder,
-                            FailureFirst,
-                            comparand: 0);
-                    }
-                },
-                this,
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
         }
 
         public Task<IPreparedScene> Execution { get; }
 
         public Task Cancellation => _cancellation;
 
-        public bool CancellationRequested { get; private set; }
+        public CancellationToken CancellationToken =>
+            _cancellationToken;
 
-        public bool UnsuccessfulCompletionPrecededCancellation =>
-            Volatile.Read(ref _terminalOrder) == FailureFirst;
+        public bool CancellationRequested { get; private set; }
 
         public bool RequestCancellation()
         {
@@ -662,18 +636,6 @@ public sealed class OverlayActor : ReceiveActor
                 return false;
             }
 
-            if (Execution.IsCompleted
-                && !Execution.IsCompletedSuccessfully)
-            {
-                Interlocked.CompareExchange(
-                    ref _terminalOrder,
-                    FailureFirst,
-                    comparand: 0);
-            }
-            Interlocked.CompareExchange(
-                ref _terminalOrder,
-                CancellationFirst,
-                comparand: 0);
             CancellationRequested = true;
             _cancellation = _cancellationSource.CancelAsync();
             return true;
@@ -699,6 +661,13 @@ public sealed class OverlayActor : ReceiveActor
             }
         }
     }
+
+    private static bool IsExpectedCancellation(
+        Exception exception,
+        CancellationToken cancellationToken) =>
+        cancellationToken.IsCancellationRequested
+        && exception is OperationCanceledException canceled
+        && canceled.CancellationToken == cancellationToken;
 }
 
 /// <summary>
@@ -709,8 +678,9 @@ public interface IOverlayRenderer
 {
     /// <summary>
     /// Prepares a scene without changing observable desktop state.
-    /// Cancellation is cooperative; the operation may end by returning a
-    /// prepared scene or by throwing.
+    /// Cancellation is cooperative; an expected cancellation throws an
+    /// <see cref="OperationCanceledException"/> carrying the supplied token.
+    /// The operation may still return a prepared scene after cancellation.
     /// Throwing for any other reason is an unexpected application failure.
     /// </summary>
     Task<IPreparedScene> PrepareAsync(

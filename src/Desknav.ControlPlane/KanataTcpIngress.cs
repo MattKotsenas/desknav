@@ -15,7 +15,7 @@ public sealed class KanataTcpIngress
     {
     }
 
-    internal KanataTcpIngress(
+    public KanataTcpIngress(
         IPEndPoint endpoint,
         IKanataFrameParser frameParser)
     {

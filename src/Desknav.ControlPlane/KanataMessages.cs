@@ -58,12 +58,12 @@ public sealed record GestureObserved(
     KanataFrameSequence Sequence,
     GestureToken Token);
 
-internal abstract record KanataServerFrame;
+public abstract record KanataServerFrame;
 
-internal sealed record KanataLayerChanged(KeyboardLayer Layer)
+public sealed record KanataLayerChanged(KeyboardLayer Layer)
     : KanataServerFrame;
 
-internal sealed record KanataGesturePushed(GestureToken Token)
+public sealed record KanataGesturePushed(GestureToken Token)
     : KanataServerFrame;
 
 internal sealed record KanataConnectionOpened(KanataConnectionId ConnectionId);

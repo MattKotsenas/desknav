@@ -28,12 +28,9 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
                 NavigationCoordinator.CreateProps(
                     TargetDiscoveryActor.CreateProps(
                         discovery,
-                        TimeSpan.FromHours(1),
-                        _ => system.Terminate(),
-                        out _),
+                        TimeSpan.FromHours(1)),
                     ActorRefs.Nobody,
-                    overlayOwner,
-                    _ => system.Terminate()));
+                    overlayOwner));
             var targetDiscoveryOwner =
                 await ActorTestHelpers
                     .ResolveTargetDiscoveryAsync(
@@ -110,12 +107,13 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
         try
         {
             system.ActorOf(
-                NavigationCoordinator.CreateProps(
-                    Props.Create(
-                        () => new FailingConstructionActor()),
-                    ActorRefs.Nobody,
-                    ActorRefs.Nobody,
-                    _ => system.Terminate()));
+                Props.Create(
+                    () => new RuntimeFailureTestParent(
+                        NavigationCoordinator.CreateProps(
+                            Props.Create(
+                                () => new FailingConstructionActor()),
+                            ActorRefs.Nobody,
+                            ActorRefs.Nobody))));
 
             await system.WhenTerminated.WaitAsync(timeout.Token);
         }
@@ -136,11 +134,12 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
         try
         {
             system.ActorOf(
-                NavigationCoordinator.CreateProps(
-                    Props.Create(() => new FailingActor()),
-                    ActorRefs.Nobody,
-                    ActorRefs.Nobody,
-                    _ => system.Terminate()));
+                Props.Create(
+                    () => new RuntimeFailureTestParent(
+                        NavigationCoordinator.CreateProps(
+                            Props.Create(() => new FailingActor()),
+                            ActorRefs.Nobody,
+                            ActorRefs.Nobody))));
 
             await system.WhenTerminated.WaitAsync(timeout.Token);
         }
@@ -192,5 +191,14 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
         public FailingConstructionActor() =>
             throw new InvalidOperationException(
                 "Target discovery owner construction failed.");
+    }
+
+    private sealed class RuntimeFailureTestParent : ReceiveActor
+    {
+        public RuntimeFailureTestParent(Props coordinatorProps)
+        {
+            Context.ActorOf(coordinatorProps);
+            Receive<RuntimeFailure>(_ => Context.System.Terminate());
+        }
     }
 }

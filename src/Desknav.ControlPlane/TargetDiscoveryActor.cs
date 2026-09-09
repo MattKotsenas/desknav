@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Runtime.ExceptionServices;
 
 using Akka.Actor;
 using Akka.Event;
@@ -18,28 +17,23 @@ public sealed class TargetDiscoveryActor : ReceiveActor
     private readonly IActorRef _coordinator;
     private readonly ITargetDiscovery _discovery;
     private readonly TimeSpan _operationTimeout;
-    private readonly TaskCompletionSource<bool> _shutdown;
-    private readonly Action<Exception> _reportFailure;
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly Dictionary<
         TargetDiscoveryRequestId,
         DiscoveryOperation> _operations = [];
     private readonly HashSet<Task> _releases = [];
     private TargetDiscoveryRequestId? _pendingRequestId;
+    private bool _isShuttingDown;
     private bool _isTerminating;
     private bool _isUnavailable;
 
     public TargetDiscoveryActor(
         ITargetDiscovery discovery,
-        TimeSpan operationTimeout,
-        TaskCompletionSource<bool> shutdown,
-        Action<Exception> reportFailure)
+        TimeSpan operationTimeout)
     {
         _coordinator = Context.Parent;
         _discovery = discovery;
         _operationTimeout = operationTimeout;
-        _shutdown = shutdown;
-        _reportFailure = reportFailure;
 
         Receive<DiscoverTargets>(Handle);
         Receive<CancelTargetDiscovery>(Handle);
@@ -49,35 +43,23 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         Receive<CancellationFailed>(Handle);
         Receive<OperationTimedOut>(Handle);
         Receive<CancellationTimedOut>(Handle);
+        Receive<PrepareForShutdown>(Handle);
+        Receive<ShutdownCleanupCompleted>(_ => Context.Stop(Self));
+        Receive<ShutdownCleanupFaulted>(Handle);
     }
 
     public static Props CreateProps(
         ITargetDiscovery discovery,
-        TimeSpan operationTimeout,
-        Action<Exception> reportFailure,
-        out Task shutdown)
+        TimeSpan operationTimeout)
     {
         ArgumentNullException.ThrowIfNull(discovery);
-        ArgumentNullException.ThrowIfNull(reportFailure);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
             operationTimeout,
             TimeSpan.Zero);
-        var completion = new TaskCompletionSource<bool>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        shutdown = completion.Task;
         return Props.Create(
             () => new TargetDiscoveryActor(
                 discovery,
-                operationTimeout,
-                completion,
-                reportFailure));
-    }
-
-    protected override void PostStop()
-    {
-        CompleteShutdown();
-
-        base.PostStop();
+                operationTimeout));
     }
 
     private void Handle(DiscoverTargets discover)
@@ -212,9 +194,15 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             _releases.Remove(release);
         }
 
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
         if (operation is not null
-            && operation.CancellationRequested
-            && !operation.UnsuccessfulCompletionPrecededCancellation)
+            && IsExpectedCancellation(
+                faulted.Cause,
+                operation.CancellationToken))
         {
             _log.Debug(
                 faulted.Cause,
@@ -317,13 +305,46 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         string message,
         TargetDiscoveryRequestId requestId)
     {
-        _reportFailure(cause);
+        _coordinator.Tell(new RuntimeFailure(cause));
         if (_isTerminating)
         {
             return;
         }
         _isTerminating = true;
         _log.Error(cause, message, requestId);
+    }
+
+    private void Handle(PrepareForShutdown _)
+    {
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
+        _isShuttingDown = true;
+        _isTerminating = true;
+        Task cleanup;
+        try
+        {
+            cleanup = CleanupAsync();
+        }
+        catch (Exception exception)
+        {
+            cleanup = Task.FromException(exception);
+        }
+
+        cleanup.PipeTo(
+            Self,
+            Self,
+            () => new ShutdownCleanupCompleted(),
+            exception => new ShutdownCleanupFaulted(exception));
+    }
+
+    private void Handle(ShutdownCleanupFaulted faulted)
+    {
+        _coordinator.Tell(new RuntimeFailure(faulted.Cause));
+        _log.Error(faulted.Cause, "Target discovery cleanup failed.");
+        Context.Stop(Self);
     }
 
     private Task CleanupAsync()
@@ -338,37 +359,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         cleanups.AddRange(_releases);
         _releases.Clear();
         return AwaitCleanupAsync(cleanups);
-    }
-
-    private void CompleteShutdown()
-    {
-        try
-        {
-            _ = CompleteShutdownAsync(CleanupAsync());
-        }
-        catch (Exception exception)
-        {
-            _shutdown.TrySetException(exception);
-        }
-    }
-
-    private async Task CompleteShutdownAsync(Task cleanup)
-    {
-        await cleanup.ConfigureAwait(
-            ConfigureAwaitOptions.SuppressThrowing);
-        if (cleanup.IsFaulted)
-        {
-            _shutdown.TrySetException(
-                cleanup.Exception!.Flatten().InnerExceptions);
-        }
-        else if (cleanup.IsCanceled)
-        {
-            _shutdown.TrySetCanceled();
-        }
-        else
-        {
-            _shutdown.TrySetResult(true);
-        }
     }
 
     private void StartPendingDiscovery()
@@ -431,17 +421,17 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             failures.Add(exception);
         }
 
-        if (!operation.Execution.IsCompletedSuccessfully
-            && operation.UnsuccessfulCompletionPrecededCancellation)
+        try
         {
-            if (operation.Execution.Exception is { } exception)
+            await operation.Execution.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            if (!IsExpectedCancellation(
+                    exception,
+                    operation.CancellationToken))
             {
                 failures.Add(exception);
-            }
-            else
-            {
-                failures.Add(
-                    new TaskCanceledException(operation.Execution));
             }
         }
 
@@ -454,12 +444,7 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             failures.Add(exception);
         }
 
-        if (failures.Count == 1)
-        {
-            ExceptionDispatchInfo.Capture(failures[0]).Throw();
-        }
-
-        if (failures.Count > 1)
+        if (failures.Count > 0)
         {
             throw new AggregateException(
                 "Target discovery cleanup failed.",
@@ -533,6 +518,10 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         TargetDiscoveryRequestId RequestId,
         Exception Cause);
 
+    private sealed record ShutdownCleanupCompleted;
+
+    private sealed record ShutdownCleanupFaulted(Exception Cause);
+
     /// <summary>
     /// Identifies a running operation whose execution budget expired.
     /// </summary>
@@ -553,12 +542,10 @@ public sealed class TargetDiscoveryActor : ReceiveActor
     // Internal so resource lifetime can be tested without actor timing.
     internal sealed class DiscoveryOperation : IAsyncDisposable
     {
-        private const int CancellationFirst = 1;
-        private const int FailureFirst = 2;
         private readonly CancellationTokenSource _cancellationSource;
+        private readonly CancellationToken _cancellationToken;
         private ICancelable _timeout;
         private Task _cancellation = Task.CompletedTask;
-        private int _terminalOrder;
         private bool _isDisposed;
 
         public DiscoveryOperation(
@@ -567,31 +554,17 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             Task execution)
         {
             _cancellationSource = cancellation;
+            _cancellationToken = cancellation.Token;
             _timeout = timeout;
             Execution = execution;
-            _ = execution.ContinueWith(
-                static (completed, state) =>
-                {
-                    if (!completed.IsCompletedSuccessfully)
-                    {
-                        Interlocked.CompareExchange(
-                            ref ((DiscoveryOperation)state!)._terminalOrder,
-                            FailureFirst,
-                            comparand: 0);
-                    }
-                },
-                this,
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
         }
 
         public bool CancellationRequested { get; private set; }
 
-        public bool UnsuccessfulCompletionPrecededCancellation =>
-            Volatile.Read(ref _terminalOrder) == FailureFirst;
-
         public Task Cancellation => _cancellation;
+
+        public CancellationToken CancellationToken =>
+            _cancellationToken;
 
         public Task Execution { get; }
 
@@ -606,18 +579,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
                 return false;
             }
 
-            if (Execution.IsCompleted
-                && !Execution.IsCompletedSuccessfully)
-            {
-                Interlocked.CompareExchange(
-                    ref _terminalOrder,
-                    FailureFirst,
-                    comparand: 0);
-            }
-            Interlocked.CompareExchange(
-                ref _terminalOrder,
-                CancellationFirst,
-                comparand: 0);
             CancellationRequested = true;
             _cancellation = _cancellationSource.CancelAsync();
             cancellationTask = _cancellation;
@@ -675,6 +636,13 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         private void ThrowIfDisposed() =>
             ObjectDisposedException.ThrowIf(_isDisposed, this);
     }
+
+    private static bool IsExpectedCancellation(
+        Exception exception,
+        CancellationToken cancellationToken) =>
+        cancellationToken.IsCancellationRequested
+        && exception is OperationCanceledException canceled
+        && canceled.CancellationToken == cancellationToken;
 }
 
 /// <summary>
@@ -685,8 +653,9 @@ public interface ITargetDiscovery
     /// <summary>
     /// Performs one target enumeration. Expected inability to enumerate
     /// returns <see cref="TargetDiscoveryResult.Failed"/>; throwing is an
-    /// unexpected application failure. Cancellation is cooperative and may end
-    /// by returning or throwing.
+    /// unexpected application failure. An expected cancellation throws an
+    /// <see cref="OperationCanceledException"/> carrying the supplied token;
+    /// the operation may also return after cancellation.
     /// </summary>
     Task<TargetDiscoveryResult> DiscoverAsync(
         CancellationToken cancellationToken);

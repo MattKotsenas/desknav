@@ -356,10 +356,7 @@ public sealed class WpfOverlayRendererTests
             var coordinator = system.ActorOf(
                 Props.Create(() => new RecordingActor(applied)));
             var overlay = system.ActorOf(
-                OverlayActor.CreateProps(
-                    renderer,
-                    _ => system.Terminate(),
-                    out _));
+                OverlayActor.CreateProps(renderer));
             var revision = PresentationRevision.From(1);
 
             overlay.Tell(
@@ -381,7 +378,7 @@ public sealed class WpfOverlayRendererTests
             Assert.True(
                 await overlay.GracefulStop(
                     TimeSpan.FromSeconds(3),
-                    PoisonPill.Instance));
+                    new PrepareForShutdown()));
         }
         finally
         {

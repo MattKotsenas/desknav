@@ -1,16 +1,13 @@
 using System.Net;
 using System.Windows;
 
-using Desknav.UI.Wpf;
-using Desknav.UIAutomation;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Desknav.App;
 
 public partial class App : Application
 {
-    private static readonly TimeSpan TargetDiscoveryTimeout =
-        TimeSpan.FromSeconds(5);
-
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -24,38 +21,30 @@ public partial class App : Application
             return;
         }
 
-        using var cancellation = new CancellationTokenSource();
-        ConsoleCancelEventHandler cancel = (_, eventArgs) =>
-        {
-            eventArgs.Cancel = true;
-            cancellation.Cancel();
-        };
-        Console.CancelKeyPress += cancel;
-
+        using var host = DesknavRuntime
+            .CreateHostBuilder(endpoint, Dispatcher)
+            .Build();
         try
         {
-            var host = new DesknavHost(
-                endpoint,
-                new WindowsTargetDiscovery(
-                    new WindowsTargetScanner()),
-                new WpfOverlayRenderer(Dispatcher),
-                TargetDiscoveryTimeout);
-            await host.RunAsync(cancellation.Token);
-            Shutdown();
-        }
-        catch (OperationCanceledException)
-            when (cancellation.IsCancellationRequested)
-        {
-            Shutdown();
+            Shutdown(await RunHostAsync(host));
         }
         catch (Exception exception)
         {
             Console.Error.WriteLine(exception);
             Shutdown(exitCode: 1);
         }
-        finally
+    }
+
+    internal static async Task<int> RunHostAsync(IHost host)
+    {
+        var status = host.Services.GetRequiredService<RuntimeStatus>();
+        await host.RunAsync();
+        if (status.Failure is null)
         {
-            Console.CancelKeyPress -= cancel;
+            return 0;
         }
+
+        Console.Error.WriteLine(status.Failure);
+        return 1;
     }
 }

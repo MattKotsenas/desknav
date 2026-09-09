@@ -29,8 +29,7 @@ public sealed class CommandGestureIngressTests
                     RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
-                    ActorRefs.Nobody,
-                    _ => system.Terminate()));
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -120,8 +119,7 @@ public sealed class CommandGestureIngressTests
                 NavigationCoordinator.CreateProps(
                     Props.Empty,
                     recorder,
-                    ActorRefs.Nobody,
-                    _ => system.Terminate()));
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -205,8 +203,7 @@ public sealed class CommandGestureIngressTests
                     RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
-                    ActorRefs.Nobody,
-                    _ => system.Terminate()));
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -275,8 +272,7 @@ public sealed class CommandGestureIngressTests
                     RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
-                    ActorRefs.Nobody,
-                    _ => system.Terminate()));
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -343,8 +339,7 @@ public sealed class CommandGestureIngressTests
                     RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
-                    ActorRefs.Nobody,
-                    _ => system.Terminate()));
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();
@@ -431,8 +426,7 @@ public sealed class CommandGestureIngressTests
                     RecordingActor.CreateProps(
                         observedDiscoveries.Writer),
                     inputObserver,
-                    ActorRefs.Nobody,
-                    _ => system.Terminate()));
+                    ActorRefs.Nobody));
             var kanataActor = system.ActorOf(
                 KanataActor.CreateProps(coordinator));
             listener.Start();

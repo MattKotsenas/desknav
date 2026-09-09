@@ -9,6 +9,9 @@
 
   <ItemGroup>
     <PackageReference Include="Akka" />
+    <PackageReference Include="Akka.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Api" />
   </ItemGroup>
 
   <PropertyGroup>

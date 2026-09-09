@@ -359,7 +359,7 @@ public sealed class OverlayActorTests
             await harness.Renderer.ReadCancellationAndStartAsync();
 
         canceled.Fail(
-            new InvalidOperationException("Canceled preparation unwound."));
+            new OperationCanceledException(canceled.CancellationToken));
         current.Complete();
         var activation =
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
@@ -418,7 +418,7 @@ public sealed class OverlayActorTests
         var preparation =
             (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
 
-        harness.Actor.Tell(PoisonPill.Instance);
+        harness.BeginShutdown();
         await harness.Renderer.ReadEventAsync<PreparationCanceled>();
         preparation.Complete();
         await preparation.ExecutionEnded;
@@ -440,7 +440,7 @@ public sealed class OverlayActorTests
         var preparation =
             (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
 
-        harness.Actor.Tell(PoisonPill.Instance);
+        harness.BeginShutdown();
         await harness.Renderer.ReadEventAsync<PreparationCanceled>();
         Assert.False(harness.Shutdown.IsCompleted);
 
@@ -450,7 +450,7 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task ShutdownTaskReportsCancellationCallbackFailure()
+    public async Task ShutdownReportsCancellationCallbackFailure()
     {
         await using var harness = new ActorHarness();
         harness.Renderer.FailCancellation(
@@ -462,25 +462,20 @@ public sealed class OverlayActorTests
         var preparation =
             (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
 
-        harness.Actor.Tell(PoisonPill.Instance);
+        harness.BeginShutdown();
         await harness.Renderer.ReadEventAsync<PreparationCanceled>();
         preparation.Complete();
 
-        await Assert.ThrowsAnyAsync<Exception>(
-            () => harness.Shutdown.WaitAsync(harness.TimeoutToken));
+        var failure = await harness.Failure.WaitAsync(harness.TimeoutToken);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
         Assert.Contains(
-            harness.Shutdown.Exception!
-                .Flatten()
-                .InnerExceptions,
-            failure => failure
-                .ToString()
-                .Contains(
-                    "Cancellation failed.",
-                    StringComparison.Ordinal));
+            "Cancellation failed.",
+            failure.Cause.ToString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ShutdownTaskReportsSceneDisposalFailure()
+    public async Task ShutdownReportsSceneDisposalFailure()
     {
         await using var harness = new ActorHarness();
         var active = await harness.ApplyCompletelyAsync(
@@ -489,14 +484,14 @@ public sealed class OverlayActorTests
         active.Scene.FailDisposal(
             new InvalidOperationException("Scene disposal failed."));
 
-        harness.Actor.Tell(PoisonPill.Instance);
+        harness.BeginShutdown();
 
-        await Assert.ThrowsAnyAsync<Exception>(
-            () => harness.Shutdown.WaitAsync(harness.TimeoutToken));
+        var failure = await harness.Failure.WaitAsync(harness.TimeoutToken);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
         Assert.Equal(
             "Scene disposal failed.",
             Assert.Single(
-                harness.Shutdown.Exception!
+                Assert.IsType<AggregateException>(failure.Cause)
                     .Flatten()
                     .InnerExceptions).Message);
     }
@@ -515,12 +510,11 @@ public sealed class OverlayActorTests
         var activation =
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
 
-        Assert.True(
-            await harness.Actor.GracefulStop(
-                TimeSpan.FromSeconds(3),
-                PoisonPill.Instance));
+        harness.BeginShutdown();
+        Assert.False(harness.Shutdown.IsCompleted);
         activation.Complete();
         await harness.Renderer.ReadEventAsync<ActivationCompleted>();
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
 
         Assert.Same(
             preparation.Scene,
@@ -544,12 +538,11 @@ public sealed class OverlayActorTests
         var activation =
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
 
-        Assert.True(
-            await harness.Actor.GracefulStop(
-                TimeSpan.FromSeconds(3),
-                PoisonPill.Instance));
+        harness.BeginShutdown();
+        Assert.False(harness.Shutdown.IsCompleted);
         activation.Complete();
         await harness.Renderer.ReadEventAsync<ActivationCompleted>();
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
         var disposed = new[]
         {
             (await harness.Renderer.ReadEventAsync<SceneDisposed>()).Scene,
@@ -580,10 +573,8 @@ public sealed class OverlayActorTests
         var activation =
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
 
-        Assert.True(
-            await harness.Actor.GracefulStop(
-                TimeSpan.FromSeconds(3),
-                PoisonPill.Instance));
+        harness.BeginShutdown();
+        Assert.False(harness.Shutdown.IsCompleted);
         activation.Complete();
         await harness.Renderer.ReadEventAsync<ActivationCompleted>();
         var disposed = new[]
@@ -594,10 +585,10 @@ public sealed class OverlayActorTests
 
         Assert.Contains(active.Scene, disposed);
         Assert.Contains(next.Scene, disposed);
-        await Assert.ThrowsAnyAsync<Exception>(
-            () => harness.Shutdown.WaitAsync(harness.TimeoutToken));
+        var failure = await harness.Failure.WaitAsync(harness.TimeoutToken);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
         Assert.Collection(
-            harness.Shutdown.Exception!
+            Assert.IsType<AggregateException>(failure.Cause)
                 .Flatten()
                 .InnerExceptions,
             failure => Assert.Equal(
@@ -614,7 +605,7 @@ public sealed class OverlayActorTests
             PresentationRevision.From(1),
             VisiblePresentation());
 
-        harness.Actor.Tell(PoisonPill.Instance);
+        harness.BeginShutdown();
 
         Assert.Same(
             active.Scene,
@@ -655,12 +646,20 @@ public sealed class OverlayActorTests
                 Props.Create(
                     () => new RecordingActor(
                         _acknowledgements.Writer)));
-            var props = OverlayActor.CreateProps(
-                Renderer,
-                _ => System.Terminate(),
-                out var shutdown);
-            Shutdown = shutdown;
-            Actor = System.ActorOf(props);
+            var actorCreated =
+                new TaskCompletionSource<IActorRef>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            var failure =
+                new TaskCompletionSource<RuntimeFailure>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            System.ActorOf(
+                Props.Create(
+                    () => new OverlayTestParent(
+                        OverlayActor.CreateProps(Renderer),
+                        actorCreated,
+                        failure)));
+            Actor = actorCreated.Task.GetAwaiter().GetResult();
+            Failure = failure.Task;
         }
 
         public ActorSystem System { get; }
@@ -669,7 +668,9 @@ public sealed class OverlayActorTests
 
         public ControllableOverlayRenderer Renderer { get; }
 
-        public Task Shutdown { get; }
+        public Task<RuntimeFailure> Failure { get; }
+
+        public Task Shutdown { get; private set; } = Task.CompletedTask;
 
         public CancellationToken TimeoutToken => _timeout.Token;
 
@@ -708,6 +709,14 @@ public sealed class OverlayActorTests
                 new Identify(null),
                 _timeout.Token);
 
+        public void BeginShutdown()
+        {
+            Assert.True(Shutdown.IsCompleted);
+            Shutdown = Actor.GracefulStop(
+                TimeSpan.FromSeconds(10),
+                new PrepareForShutdown());
+        }
+
         public async ValueTask DisposeAsync()
         {
             using var cleanupTimeout =
@@ -721,6 +730,56 @@ public sealed class OverlayActorTests
             finally
             {
                 _timeout.Dispose();
+            }
+        }
+
+        private sealed class OverlayTestParent : ReceiveActor
+        {
+            private readonly IActorRef _overlay;
+            private bool _isStopping;
+
+            public OverlayTestParent(
+                Props overlayProps,
+                TaskCompletionSource<IActorRef> actorCreated,
+                TaskCompletionSource<RuntimeFailure> failure)
+            {
+                _overlay = Context.ActorOf(overlayProps, "overlay");
+                Context.Watch(_overlay);
+                actorCreated.TrySetResult(_overlay);
+
+                Receive<RuntimeFailure>(
+                    reported =>
+                    {
+                        failure.TrySetResult(reported);
+                        BeginShutdown();
+                    });
+                Receive<Terminated>(
+                    terminated =>
+                    {
+                        if (terminated.ActorRef.Equals(_overlay))
+                        {
+                            Context.System.Terminate();
+                        }
+                    });
+            }
+
+            protected override SupervisorStrategy SupervisorStrategy() =>
+                new OneForOneStrategy(
+                    _ =>
+                    {
+                        Context.System.Terminate();
+                        return Directive.Stop;
+                    });
+
+            private void BeginShutdown()
+            {
+                if (_isStopping)
+                {
+                    return;
+                }
+
+                _isStopping = true;
+                _overlay.Tell(new PrepareForShutdown());
             }
         }
     }

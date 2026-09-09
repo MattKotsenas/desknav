@@ -139,13 +139,21 @@ generation but do not substitute for it.
 
 ### Desknav application
 
-`Desknav.App` is the outer composition root. It owns one actor system and the
-WPF dispatcher, connects to the explicitly configured loopback Kanata
-endpoint, and composes the control-plane coordinator with the Windows UI
-Automation discovery and WPF overlay boundaries. Kanata ingress completion or
-unexpected actor-system termination ends the application. Boundary owners
-report fatal failures to the application, which terminates the actor system
-and awaits every boundary's cleanup before exiting.
+`Desknav.App` is the outer composition root. Microsoft Generic Host owns the
+application lifetime and runs Kanata ingress as a background service.
+Akka.Hosting owns the actor system and creates one runtime guardian, which
+owns the local Kanata actor, control-plane coordinator, target-discovery
+owner, and overlay owner. Dependency injection supplies the configured
+loopback endpoint, TCP parser and ingress, Windows UI Automation discovery,
+WPF dispatcher, and overlay renderer.
+
+Clean Kanata ingress completion requests host shutdown. Unexpected ingress or
+critical actor failure records an unsuccessful runtime outcome and requests
+the same shutdown path. Generic Host stops ingress first, then its runtime
+shutdown service asks the guardian to stop its critical children. Boundary
+owners stop accepting work, cancel and await their owned operations, release
+their resources, and stop only after cleanup completes. Akka.Hosting runs
+coordinated actor-system shutdown only after those critical children stop.
 
 The application can display the current discovered target map, but it does not
 accept label input until the local Kanata actor can establish the
@@ -338,9 +346,10 @@ from the coordinator and reconcile external state to that replica after
 completion, cancellation, reconnect, and restart. They do not author desired
 state.
 
-An unexpected failure of the coordinator or a boundary owner stops the
-application. Restarting must reconcile observable state and must not replay
-an ambiguous one-shot operation.
+An unexpected failure of ingress, the coordinator, or a boundary owner stops
+the application through Generic Host. The runtime guardian owns critical
+actor supervision and fatal actor policy. Restarting must reconcile observable
+state and must not replay an ambiguous one-shot operation.
 
 ## Verification
 
