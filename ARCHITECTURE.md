@@ -150,12 +150,12 @@ Windows UI Automation discovery, WPF dispatcher, and overlay renderer.
 Clean Kanata ingress completion requests host shutdown. Unexpected ingress or
 critical actor failure records the host's first fatal runtime outcome and
 requests the same shutdown path. Generic Host requests ingress shutdown before
-Akka.Hosting runs coordinated actor-system shutdown. Its final application
-phase asks the guardian to stop its critical children. Boundary owners stop
-accepting work and attempt to cancel and release their owned resources. The
-guardian request waits up to five seconds inside a six-second phase; request
-timeout records a fatal outcome and actor-system shutdown continues. Managed
-cleanup is best effort and is not a hard-process-termination guarantee.
+Akka.Hosting runs coordinated actor-system shutdown, which terminates the actor
+tree through Akka's lifecycle. Resource-owning actors initiate cancellation and
+release of outstanding work from `PostStop` and log eventual cleanup failure.
+The Host does not wait for that asynchronous cleanup or make its result part of
+the process exit code. Managed cleanup is best effort and is not a
+hard-process-termination guarantee.
 
 Actor restart is not a recovery policy by itself. The current runtime treats
 unexpected actor failure or permanent critical-child loss as fatal until that

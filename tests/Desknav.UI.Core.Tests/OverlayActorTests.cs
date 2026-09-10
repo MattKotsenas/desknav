@@ -408,7 +408,7 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task ShutdownCleanupCancelsPreparationAndDisposesItsScene()
+    public async Task StoppingActorCancelsPreparationAndDisposesItsScene()
     {
         await using var harness = new ActorHarness();
 
@@ -430,27 +430,7 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task ShutdownTaskWaitsForPreparationCleanup()
-    {
-        await using var harness = new ActorHarness();
-
-        harness.Apply(
-            PresentationRevision.From(1),
-            VisiblePresentation());
-        var preparation =
-            (await harness.Renderer.ReadEventAsync<PreparationStarted>()).Call;
-
-        harness.BeginShutdown();
-        await harness.Renderer.ReadEventAsync<PreparationCanceled>();
-        Assert.False(harness.Shutdown.IsCompleted);
-
-        preparation.Complete();
-
-        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
-    }
-
-    [Fact]
-    public async Task ShutdownReportsCancellationCallbackFailure()
+    public async Task StoppingActorDisposesSceneWhenCancellationFails()
     {
         await using var harness = new ActorHarness();
         harness.Renderer.FailCancellation(
@@ -466,16 +446,14 @@ public sealed class OverlayActorTests
         await harness.Renderer.ReadEventAsync<PreparationCanceled>();
         preparation.Complete();
 
-        var failure = await harness.Failure.WaitAsync(harness.TimeoutToken);
+        Assert.Same(
+            preparation.Scene,
+            (await harness.Renderer.ReadEventAsync<SceneDisposed>()).Scene);
         await harness.Shutdown.WaitAsync(harness.TimeoutToken);
-        Assert.Contains(
-            "Cancellation failed.",
-            failure.Cause.ToString(),
-            StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ShutdownOwnsPendingCancellationFailure()
+    public async Task StoppingActorCleansUpWithPriorCancellationPending()
     {
         await using var harness = new ActorHarness();
         harness.Renderer.BlockCancellation();
@@ -503,36 +481,14 @@ public sealed class OverlayActorTests
         harness.Renderer.ReleaseCancellation();
         second.Complete();
 
-        var failure = await harness.Failure.WaitAsync(harness.TimeoutToken);
+        Assert.Same(
+            second.Scene,
+            (await harness.Renderer.ReadEventAsync<SceneDisposed>()).Scene);
         await harness.Shutdown.WaitAsync(harness.TimeoutToken);
-        Assert.Contains(
-            "Cancellation failed.",
-            failure.Cause.ToString(),
-            StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ShutdownReportsSceneDisposalFailure()
-    {
-        await using var harness = new ActorHarness();
-        var active = await harness.ApplyCompletelyAsync(
-            PresentationRevision.From(1),
-            VisiblePresentation());
-        active.Scene.FailDisposal(
-            new InvalidOperationException("Scene disposal failed."));
-
-        harness.BeginShutdown();
-
-        var failure = await harness.Failure.WaitAsync(harness.TimeoutToken);
-        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
-        Assert.Contains(
-            "Scene disposal failed.",
-            failure.Cause.ToString(),
-            StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ShutdownCleanupWaitsForActivationBeforeDisposingIncomingScene()
+    public async Task StoppingActorDisposesIncomingSceneAfterActivation()
     {
         await using var harness = new ActorHarness();
 
@@ -544,12 +500,10 @@ public sealed class OverlayActorTests
         preparation.Complete();
         var activation =
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
-
         harness.BeginShutdown();
-        Assert.False(harness.Shutdown.IsCompleted);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
         activation.Complete();
         await harness.Renderer.ReadEventAsync<ActivationCompleted>();
-        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
 
         Assert.Same(
             preparation.Scene,
@@ -557,7 +511,7 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task ShutdownCleanupWaitsForActivationBeforeDisposingOutgoingScene()
+    public async Task StoppingActorDisposesOutgoingSceneAfterActivation()
     {
         await using var harness = new ActorHarness();
         var active = await harness.ApplyCompletelyAsync(
@@ -572,12 +526,10 @@ public sealed class OverlayActorTests
         next.Complete();
         var activation =
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
-
         harness.BeginShutdown();
-        Assert.False(harness.Shutdown.IsCompleted);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
         activation.Complete();
         await harness.Renderer.ReadEventAsync<ActivationCompleted>();
-        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
         var disposed = new[]
         {
             (await harness.Renderer.ReadEventAsync<SceneDisposed>()).Scene,
@@ -589,7 +541,7 @@ public sealed class OverlayActorTests
     }
 
     [Fact]
-    public async Task ShutdownDisposalFailureDoesNotSkipOutgoingScene()
+    public async Task StoppingActorAttemptsBothSceneDisposals()
     {
         await using var harness = new ActorHarness();
         var active = await harness.ApplyCompletelyAsync(
@@ -609,7 +561,7 @@ public sealed class OverlayActorTests
             (await harness.Renderer.ReadEventAsync<ActivationStarted>()).Call;
 
         harness.BeginShutdown();
-        Assert.False(harness.Shutdown.IsCompleted);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
         activation.Complete();
         await harness.Renderer.ReadEventAsync<ActivationCompleted>();
         var disposed = new[]
@@ -620,18 +572,10 @@ public sealed class OverlayActorTests
 
         Assert.Contains(active.Scene, disposed);
         Assert.Contains(next.Scene, disposed);
-        var failure = await harness.Failure.WaitAsync(harness.TimeoutToken);
-        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
-        Assert.True(
-            failure.Cause.ToString().Contains(
-                "Incoming disposal failed.",
-                StringComparison.Ordinal)
-            || failure.Cause is TaskCanceledException,
-            failure.Cause.ToString());
     }
 
     [Fact]
-    public async Task ShutdownCleanupDisposesActiveScene()
+    public async Task StoppingActorDisposesActiveScene()
     {
         await using var harness = new ActorHarness();
         var active = await harness.ApplyCompletelyAsync(
@@ -746,8 +690,7 @@ public sealed class OverlayActorTests
         {
             Assert.True(Shutdown.IsCompleted);
             Shutdown = Actor.GracefulStop(
-                TimeSpan.FromSeconds(10),
-                new PrepareForShutdown());
+                TimeSpan.FromSeconds(10));
         }
 
         public async ValueTask DisposeAsync()
@@ -769,7 +712,6 @@ public sealed class OverlayActorTests
         private sealed class OverlayTestParent : ReceiveActor
         {
             private readonly IActorRef _overlay;
-            private bool _isStopping;
 
             public OverlayTestParent(
                 Props overlayProps,
@@ -784,7 +726,7 @@ public sealed class OverlayActorTests
                     reported =>
                     {
                         failure.TrySetResult(reported);
-                        BeginShutdown();
+                        Context.System.Terminate();
                     });
                 Receive<Terminated>(
                     terminated =>
@@ -803,17 +745,6 @@ public sealed class OverlayActorTests
                         Context.System.Terminate();
                         return Directive.Stop;
                     });
-
-            private void BeginShutdown()
-            {
-                if (_isStopping)
-                {
-                    return;
-                }
-
-                _isStopping = true;
-                _overlay.Tell(new PrepareForShutdown());
-            }
         }
     }
 

@@ -20,9 +20,6 @@ public sealed class OverlayActor : ReceiveActor
     private ReadyPresentation? _ready;
     private ActivationOperation? _activation;
     private ActivePresentation? _active;
-    private Task? _shutdownCleanup;
-    private bool _cleanupFailureHandled;
-    private bool _isShuttingDown;
     private bool _isTerminating;
 
     public OverlayActor(IOverlayRenderer renderer)
@@ -37,9 +34,6 @@ public sealed class OverlayActor : ReceiveActor
         Receive<ActivationFaulted>(Handle);
         Receive<ReleaseCompleted>(Handle);
         Receive<ReleaseFaulted>(Handle);
-        Receive<PrepareForShutdown>(Handle);
-        Receive<ShutdownCleanupCompleted>(_ => Context.Stop(Self));
-        Receive<ShutdownCleanupFaulted>(Handle);
     }
 
     public static Props CreateProps(IOverlayRenderer renderer)
@@ -49,13 +43,7 @@ public sealed class OverlayActor : ReceiveActor
     }
 
     protected override void PostStop()
-    {
-        _shutdownCleanup ??= CleanupAsync();
-        if (!_cleanupFailureHandled)
-        {
-            ObserveBestEffortCleanup(_shutdownCleanup);
-        }
-    }
+        => ObserveBestEffortCleanup(CleanupAsync());
 
     private void Handle(ApplyTargetPresentation apply)
     {
@@ -188,11 +176,6 @@ public sealed class OverlayActor : ReceiveActor
 
     private void Handle(CancellationFailed failed)
     {
-        if (_isShuttingDown)
-        {
-            return;
-        }
-
         StopApplication(
             failed.Cause,
             "Cancellation of presentation preparation {0} failed.",
@@ -237,11 +220,6 @@ public sealed class OverlayActor : ReceiveActor
 
     private void Handle(ActivationFinished finished)
     {
-        if (_isShuttingDown && _activation is null)
-        {
-            return;
-        }
-
         if (_activation is not { } activation
             || activation.Revision != finished.Revision)
         {
@@ -274,11 +252,6 @@ public sealed class OverlayActor : ReceiveActor
 
     private void Handle(ActivationFaulted faulted)
     {
-        if (_isShuttingDown && _activation is null)
-        {
-            return;
-        }
-
         if (_activation?.Revision != faulted.Revision)
         {
             var cause = new InvalidOperationException(
@@ -321,11 +294,6 @@ public sealed class OverlayActor : ReceiveActor
     private void Handle(ReleaseFaulted faulted)
     {
         _releases.Remove(faulted.ReleaseTask);
-        if (_isShuttingDown)
-        {
-            return;
-        }
-
         StopApplication(
             faulted.Cause,
             "Release of an overlay resource faulted unexpectedly.");
@@ -361,38 +329,13 @@ public sealed class OverlayActor : ReceiveActor
         _log.Error(cause, message, arguments);
     }
 
-    private void Handle(PrepareForShutdown _)
-    {
-        if (_isShuttingDown)
-        {
-            return;
-        }
-
-        _isShuttingDown = true;
-        _isTerminating = true;
-        _shutdownCleanup = CleanupAsync();
-        _shutdownCleanup.PipeTo(
-            Self,
-            Self,
-            () => new ShutdownCleanupCompleted(),
-            exception => new ShutdownCleanupFaulted(exception));
-    }
-
-    private void Handle(ShutdownCleanupFaulted faulted)
-    {
-        _cleanupFailureHandled = true;
-        Context.Parent.Tell(new RuntimeFailure(faulted.Cause));
-        _log.Error(faulted.Cause, "Overlay cleanup failed.");
-        Context.Stop(Self);
-    }
-
     private Task CleanupAsync()
     {
         var cleanups = new List<Task>(
             _preparations.Count + _releases.Count + 2);
         cleanups.AddRange(
             _preparations.Values.Select(
-                ReleasePreparationDuringShutdownAsync));
+                ReleasePreparationAfterStopAsync));
         _preparations.Clear();
 
         if (_ready is { } ready)
@@ -407,7 +350,7 @@ public sealed class OverlayActor : ReceiveActor
             var activeScene = _active?.Scene;
             _active = null;
             cleanups.Add(
-                ReleaseActivationDuringShutdownAsync(
+                ReleaseActivationAfterStopAsync(
                     activation,
                     activeScene));
         }
@@ -456,7 +399,7 @@ public sealed class OverlayActor : ReceiveActor
         }
     }
 
-    private async Task ReleasePreparationDuringShutdownAsync(
+    private async Task ReleasePreparationAfterStopAsync(
         PreparationOperation operation)
     {
         IPreparedScene? scene = null;
@@ -474,7 +417,7 @@ public sealed class OverlayActor : ReceiveActor
             {
                 _log.Debug(
                     "Canceled presentation preparation ended during"
-                    + " shutdown.");
+                    + " actor stop.");
             }
         }
         finally
@@ -491,7 +434,7 @@ public sealed class OverlayActor : ReceiveActor
         }
     }
 
-    private async Task ReleaseActivationDuringShutdownAsync(
+    private async Task ReleaseActivationAfterStopAsync(
         ActivationOperation operation,
         IPreparedScene? activeScene)
     {
@@ -556,10 +499,6 @@ public sealed class OverlayActor : ReceiveActor
     private sealed record ReleaseFaulted(
         Task ReleaseTask,
         Exception Cause);
-
-    private sealed record ShutdownCleanupCompleted;
-
-    private sealed record ShutdownCleanupFaulted(Exception Cause);
 
     private sealed class PreparationOperation : IAsyncDisposable
     {

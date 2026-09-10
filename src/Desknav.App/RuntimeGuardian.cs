@@ -1,4 +1,3 @@
-using Akka;
 using Akka.Actor;
 using Akka.Event;
 
@@ -21,12 +20,6 @@ internal sealed class RuntimeGuardian : ReceiveActor
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly RuntimeOutcome _outcome;
     private readonly ILoggingAdapter _log = Context.GetLogger();
-    private readonly IActorRef _overlay;
-    private readonly IActorRef _coordinator;
-    private readonly IActorRef _kanata;
-    private readonly HashSet<IActorRef> _children;
-    private IActorRef? _shutdownRequester;
-    private bool _isStopping;
 
     public RuntimeGuardian(
         ITargetDiscovery targetDiscovery,
@@ -37,30 +30,27 @@ internal sealed class RuntimeGuardian : ReceiveActor
         _applicationLifetime = applicationLifetime;
         _outcome = outcome;
 
-        _overlay = Context.ActorOf(
+        var overlay = Context.ActorOf(
             OverlayActor.CreateProps(overlayRenderer),
             "overlay");
-        _coordinator = Context.ActorOf(
+        var coordinator = Context.ActorOf(
             NavigationCoordinator.CreateProps(
                 TargetDiscoveryActor.CreateProps(
                     targetDiscovery,
                     TargetDiscoveryTimeout),
                 ActorRefs.Nobody,
-                _overlay),
+                overlay),
             "coordinator");
-        _kanata = Context.ActorOf(
-            KanataActor.CreateProps(_coordinator),
+        var kanata = Context.ActorOf(
+            KanataActor.CreateProps(coordinator),
             "kanata");
-        _children = [_overlay, _coordinator, _kanata];
-        foreach (var child in _children)
-        {
-            Context.Watch(child);
-        }
+        Context.Watch(overlay);
+        Context.Watch(coordinator);
+        Context.Watch(kanata);
 
         Receive<RuntimeFailure>(failure => StopApplication(failure.Cause));
-        Receive<PrepareForShutdown>(Handle);
         Receive<Terminated>(Handle);
-        ReceiveAny(_kanata.Forward);
+        ReceiveAny(kanata.Forward);
     }
 
     protected override SupervisorStrategy SupervisorStrategy() =>
@@ -71,59 +61,10 @@ internal sealed class RuntimeGuardian : ReceiveActor
                 return Directive.Stop;
             });
 
-    private void Handle(PrepareForShutdown _)
-    {
-        if (_isStopping)
-        {
-            return;
-        }
-
-        _isStopping = true;
-        _shutdownRequester = Sender;
-        if (_children.Contains(_overlay))
-        {
-            _overlay.Tell(new PrepareForShutdown());
-        }
-        if (_children.Contains(_coordinator))
-        {
-            _coordinator.Tell(new PrepareForShutdown());
-        }
-        if (_children.Contains(_kanata))
-        {
-            Context.Stop(_kanata);
-        }
-
-        CompleteShutdownIfReady();
-    }
-
     private void Handle(Terminated terminated)
-    {
-        if (!_children.Remove(terminated.ActorRef))
-        {
-            return;
-        }
-
-        if (!_isStopping)
-        {
-            StopApplication(
-                new InvalidOperationException(
-                    $"{terminated.ActorRef.Path.Name} stopped unexpectedly."));
-            return;
-        }
-
-        CompleteShutdownIfReady();
-    }
-
-    private void CompleteShutdownIfReady()
-    {
-        if (_children.Count != 0)
-        {
-            return;
-        }
-
-        _shutdownRequester?.Tell(Done.Instance);
-        Context.Stop(Self);
-    }
+        => StopApplication(
+            new InvalidOperationException(
+                $"{terminated.ActorRef.Path.Name} stopped unexpectedly."));
 
     private void StopApplication(Exception cause)
     {

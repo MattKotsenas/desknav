@@ -26,7 +26,7 @@ kanata --cfg src\Desknav.Kanata\desknav.kbd --port 127.0.0.1:5829
 In another terminal, start Desknav against that endpoint:
 
 ```powershell
-dotnet run --project src\Desknav.App -- --kanata-endpoint 127.0.0.1:5829
+dotnet run --project src\Desknav.App -- Kanata:Endpoint=127.0.0.1:5829
 ```
 
 `CAP Space f` discovers the foreground window's eligible controls and displays

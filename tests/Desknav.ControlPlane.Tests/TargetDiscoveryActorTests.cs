@@ -722,7 +722,7 @@ public sealed class TargetDiscoveryActorTests
     }
 
     [Fact]
-    public async Task ShutdownCancelsEveryOperationWhenCallbacksThrow()
+    public async Task StoppingActorCancelsEveryOperationWhenCallbacksThrow()
     {
         await using var harness = await ActorHarness.CreateAsync(
             throwOnCancellation: true);
@@ -747,12 +747,11 @@ public sealed class TargetDiscoveryActorTests
         first.Complete();
         second.Complete();
 
-        await harness.Failure.WaitAsync(harness.TimeoutToken);
         await harness.Shutdown.WaitAsync(harness.TimeoutToken);
     }
 
     [Fact]
-    public async Task ShutdownReportsPendingCancellationFailure()
+    public async Task StoppingActorCancelsWithPriorCancellationPending()
     {
         await using var harness = await ActorHarness.CreateAsync(
             throwOnCancellation: true,
@@ -777,17 +776,11 @@ public sealed class TargetDiscoveryActorTests
         harness.Discovery.ReleaseCancellationCallback();
         second.Complete();
 
-        var failure = await harness.Failure.WaitAsync(
-            harness.TimeoutToken);
         await harness.Shutdown.WaitAsync(harness.TimeoutToken);
-        Assert.Contains(
-            "Cancellation callback failed.",
-            failure.Cause.ToString(),
-            StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ShutdownTaskWaitsForDiscoveryCancellation()
+    public async Task StoppingActorDoesNotWaitForDiscoveryCancellation()
     {
         await using var harness = await ActorHarness.CreateAsync();
 
@@ -797,11 +790,9 @@ public sealed class TargetDiscoveryActorTests
 
         harness.BeginShutdown();
         await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
-        Assert.False(harness.Shutdown.IsCompleted);
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
 
         call.Complete();
-
-        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
     }
 
     private sealed class ActorHarness : IAsyncDisposable
@@ -910,8 +901,7 @@ public sealed class TargetDiscoveryActorTests
         {
             Assert.True(Shutdown.IsCompleted);
             Shutdown = Actor.GracefulStop(
-                TimeSpan.FromSeconds(10),
-                new PrepareForShutdown());
+                TimeSpan.FromSeconds(10));
         }
 
         public async Task AssertNoMoreCoordinatorMessagesAsync()
@@ -949,7 +939,6 @@ public sealed class TargetDiscoveryActorTests
     {
         private readonly IActorRef _coordinator;
         private readonly IActorRef _targetDiscovery;
-        private bool _isStopping;
 
         public TargetDiscoveryTestParent(
             Props targetDiscoveryProps,
@@ -966,7 +955,7 @@ public sealed class TargetDiscoveryActorTests
                 reported =>
                 {
                     failure.TrySetResult(reported);
-                    BeginShutdown();
+                    Context.System.Terminate();
                 });
             Receive<Terminated>(
                 terminated =>
@@ -986,17 +975,6 @@ public sealed class TargetDiscoveryActorTests
                     Context.System.Terminate();
                     return Directive.Stop;
                 });
-
-        private void BeginShutdown()
-        {
-            if (_isStopping)
-            {
-                return;
-            }
-
-            _isStopping = true;
-            _targetDiscovery.Tell(new PrepareForShutdown());
-        }
     }
 
     private sealed class RecordingCancelable : ICancelable, IDisposable

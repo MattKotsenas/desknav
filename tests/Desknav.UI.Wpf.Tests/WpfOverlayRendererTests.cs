@@ -381,8 +381,7 @@ public sealed class WpfOverlayRendererTests
 
             Assert.True(
                 await overlay.GracefulStop(
-                    TimeSpan.FromSeconds(3),
-                    new PrepareForShutdown()));
+                    TimeSpan.FromSeconds(3)));
         }
         finally
         {

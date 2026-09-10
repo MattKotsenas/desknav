@@ -23,9 +23,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         DiscoveryOperation> _operations = [];
     private readonly HashSet<Task> _releases = [];
     private TargetDiscoveryRequestId? _pendingRequestId;
-    private Task? _shutdownCleanup;
-    private bool _cleanupFailureHandled;
-    private bool _isShuttingDown;
     private bool _isTerminating;
     private bool _isUnavailable;
 
@@ -46,9 +43,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         Receive<CancellationFailed>(Handle);
         Receive<OperationTimedOut>(Handle);
         Receive<CancellationTimedOut>(Handle);
-        Receive<PrepareForShutdown>(Handle);
-        Receive<ShutdownCleanupCompleted>(_ => Context.Stop(Self));
-        Receive<ShutdownCleanupFaulted>(Handle);
     }
 
     public static Props CreateProps(
@@ -66,13 +60,7 @@ public sealed class TargetDiscoveryActor : ReceiveActor
     }
 
     protected override void PostStop()
-    {
-        _shutdownCleanup ??= CleanupAsync();
-        if (!_cleanupFailureHandled)
-        {
-            ObserveBestEffortCleanup(_shutdownCleanup);
-        }
-    }
+        => ObserveBestEffortCleanup(CleanupAsync());
 
     private void Handle(DiscoverTargets discover)
     {
@@ -201,11 +189,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             ReleaseOperation(faulted.RequestId, operation);
         }
 
-        if (_isShuttingDown)
-        {
-            return;
-        }
-
         if (operation is not null
             && IsExpectedCancellation(
                 faulted.Cause,
@@ -228,11 +211,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
 
     private void Handle(CancellationFailed failed)
     {
-        if (_isShuttingDown)
-        {
-            return;
-        }
-
         StopApplication(
             failed.Cause,
             "Cancellation of target discovery request {0} failed.",
@@ -328,38 +306,13 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         _log.Error(cause, message, requestId);
     }
 
-    private void Handle(PrepareForShutdown _)
-    {
-        if (_isShuttingDown)
-        {
-            return;
-        }
-
-        _isShuttingDown = true;
-        _isTerminating = true;
-        _shutdownCleanup = CleanupAsync();
-        _shutdownCleanup.PipeTo(
-            Self,
-            Self,
-            () => new ShutdownCleanupCompleted(),
-            exception => new ShutdownCleanupFaulted(exception));
-    }
-
-    private void Handle(ShutdownCleanupFaulted faulted)
-    {
-        _cleanupFailureHandled = true;
-        _coordinator.Tell(new RuntimeFailure(faulted.Cause));
-        _log.Error(faulted.Cause, "Target discovery cleanup failed.");
-        Context.Stop(Self);
-    }
-
     private Task CleanupAsync()
     {
         var cleanups = new List<Task>(
             _operations.Count + _releases.Count);
         foreach (var operation in _operations.Values)
         {
-            cleanups.Add(CancelDuringShutdownAsync(operation));
+            cleanups.Add(CancelAfterStopAsync(operation));
         }
         _operations.Clear();
         cleanups.AddRange(_releases);
@@ -418,11 +371,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
     private void Handle(DiscoveryReleaseFaulted faulted)
     {
         _releases.Remove(faulted.Release);
-        if (_isShuttingDown)
-        {
-            return;
-        }
-
         StopApplication(
             faulted.Cause,
             "Release of target discovery request {0} faulted"
@@ -447,7 +395,7 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         }
     }
 
-    private async Task CancelDuringShutdownAsync(
+    private async Task CancelAfterStopAsync(
         DiscoveryOperation operation)
     {
         try
@@ -463,7 +411,7 @@ public sealed class TargetDiscoveryActor : ReceiveActor
                     operation.CancellationToken))
             {
                 _log.Debug(
-                    "Canceled target discovery ended during shutdown.");
+                    "Canceled target discovery ended during actor stop.");
             }
         }
         finally
@@ -515,10 +463,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
     private sealed record CancellationFailed(
         TargetDiscoveryRequestId RequestId,
         Exception Cause);
-
-    private sealed record ShutdownCleanupCompleted;
-
-    private sealed record ShutdownCleanupFaulted(Exception Cause);
 
     /// <summary>
     /// Identifies a running operation whose execution budget expired.

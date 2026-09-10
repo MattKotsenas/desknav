@@ -10,7 +10,7 @@ namespace Desknav.App;
 public partial class App : Application
 {
     private const string Usage =
-        "Usage: Desknav.App --kanata-endpoint <IP:PORT>";
+        "Usage: Desknav.App Kanata:Endpoint=<IP:PORT>";
 
     protected override async void OnStartup(StartupEventArgs e)
     {

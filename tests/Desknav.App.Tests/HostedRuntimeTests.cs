@@ -36,7 +36,7 @@ public sealed class HostedRuntimeTests
     public async Task InvalidEndpointReturnsUsageExitCode(string endpoint)
     {
         var exitCode = await App.RunAsync(
-            ["--kanata-endpoint", endpoint],
+            [$"Kanata:Endpoint={endpoint}"],
             Dispatcher.CurrentDispatcher);
 
         Assert.Equal(2, exitCode);
@@ -275,7 +275,7 @@ public sealed class HostedRuntimeTests
     }
 
     [Fact]
-    public async Task HostWaitsForOverlayCleanupWithinBudget()
+    public async Task HostDoesNotWaitForOverlayCleanup()
     {
         using var timeout =
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -300,60 +300,21 @@ public sealed class HostedRuntimeTests
             client.Close();
             await renderer.DisposalStarted.WaitAsync(timeout.Token);
 
-            Assert.False(shutdown.IsCompleted);
-            renderer.FinishDisposal();
-            await shutdown;
+            await shutdown.WaitAsync(
+                TimeSpan.FromSeconds(1),
+                TestContext.Current.CancellationToken);
             Assert.Null(
                 host.Services.GetRequiredService<RuntimeOutcome>().Failure);
         }
         finally
         {
-            listener.Stop();
-        }
-    }
-
-    [Fact]
-    public async Task HostStopsWhenOverlayCleanupExceedsBudget()
-    {
-        using var timeout =
-            new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var renderer = new BlockingCleanupRenderer();
-        using var host = CreateHost(
-            (IPEndPoint)listener.LocalEndpoint,
-            new FakeTargetDiscovery(Targets()),
-            renderer);
-
-        try
-        {
-            await host.StartAsync(timeout.Token);
-            var shutdown = host.WaitForShutdownAsync(timeout.Token);
-            using var client =
-                await listener.AcceptTcpClientAsync(timeout.Token);
-            await using var writer = CreateWriter(client);
-
-            await WriteTargetCommandAsync(writer);
-            await renderer.Activated.WaitAsync(timeout.Token);
-            client.Close();
-            await renderer.DisposalStarted.WaitAsync(timeout.Token);
-
-            await shutdown;
-
-            Assert.IsType<TimeoutException>(
-                host.Services
-                    .GetRequiredService<RuntimeOutcome>()
-                    .Failure);
-        }
-        finally
-        {
             renderer.FinishDisposal();
             listener.Stop();
         }
     }
 
     [Fact]
-    public async Task HostWaitsForDiscoveryCancellation()
+    public async Task HostDoesNotWaitForDiscoveryCancellation()
     {
         using var timeout =
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -378,21 +339,21 @@ public sealed class HostedRuntimeTests
             client.Close();
             await discovery.CancellationRequested.WaitAsync(timeout.Token);
 
-            Assert.False(shutdown.IsCompleted);
-
-            discovery.FinishCancellation();
-            await shutdown;
+            await shutdown.WaitAsync(
+                TimeSpan.FromSeconds(1),
+                TestContext.Current.CancellationToken);
             Assert.Null(
                 host.Services.GetRequiredService<RuntimeOutcome>().Failure);
         }
         finally
         {
+            discovery.FinishCancellation();
             listener.Stop();
         }
     }
 
     [Fact]
-    public async Task HostWaitsForActivationBeforeOverlayCleanup()
+    public async Task HostDoesNotWaitForActivationCleanup()
     {
         using var timeout =
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -416,13 +377,13 @@ public sealed class HostedRuntimeTests
             await renderer.ActivationStarted.WaitAsync(timeout.Token);
             client.Close();
 
-            Assert.False(shutdown.IsCompleted);
-
-            renderer.FinishActivation();
-            await renderer.DisposalStarted.WaitAsync(timeout.Token);
-            await shutdown;
+            await shutdown.WaitAsync(
+                TimeSpan.FromSeconds(1),
+                TestContext.Current.CancellationToken);
             Assert.Null(
                 host.Services.GetRequiredService<RuntimeOutcome>().Failure);
+            renderer.FinishActivation();
+            await renderer.DisposalStarted.WaitAsync(timeout.Token);
         }
         finally
         {
@@ -477,7 +438,7 @@ public sealed class HostedRuntimeTests
         IOverlayRenderer renderer,
         IKanataFrameParser? parser = null) =>
         DesknavRuntime.CreateHostBuilder(
-                ["--kanata-endpoint", endpoint.ToString()],
+                [$"Kanata:Endpoint={endpoint}"],
                 Dispatcher.CurrentDispatcher)
             .ConfigureServices(
                 (_, services) =>
