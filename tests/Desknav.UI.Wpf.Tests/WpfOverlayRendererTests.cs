@@ -164,8 +164,12 @@ public sealed class WpfOverlayRendererTests
         releaseDispatcher.Set();
         await blockingOperation;
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => preparation);
+        var exception =
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => preparation);
+        Assert.Equal(
+            cancellation.Token,
+            exception.CancellationToken);
     }
 
     [Fact]

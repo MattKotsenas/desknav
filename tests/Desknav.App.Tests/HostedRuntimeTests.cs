@@ -28,11 +28,15 @@ public sealed class HostedRuntimeTests
         Assert.Equal(2, exitCode);
     }
 
-    [Fact]
-    public async Task NonLoopbackEndpointReturnsUsageExitCode()
+    [Theory]
+    [InlineData("192.0.2.1:1234")]
+    [InlineData("127.0.0.1")]
+    [InlineData("[::1]")]
+    [InlineData("127.0.0.1:0")]
+    public async Task InvalidEndpointReturnsUsageExitCode(string endpoint)
     {
         var exitCode = await App.RunAsync(
-            ["--kanata-endpoint", "192.0.2.1:1234"],
+            ["--kanata-endpoint", endpoint],
             Dispatcher.CurrentDispatcher);
 
         Assert.Equal(2, exitCode);
