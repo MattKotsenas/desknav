@@ -107,11 +107,13 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
         try
         {
             system.ActorOf(
-                NavigationCoordinator.CreateProps(
-                    Props.Create(
-                        () => new FailingConstructionActor()),
-                    ActorRefs.Nobody,
-                    ActorRefs.Nobody));
+                Props.Create(
+                    () => new RuntimeFailureTestParent(
+                        NavigationCoordinator.CreateProps(
+                            Props.Create(
+                                () => new FailingConstructionActor()),
+                            ActorRefs.Nobody,
+                            ActorRefs.Nobody))));
 
             await system.WhenTerminated.WaitAsync(timeout.Token);
         }
@@ -132,10 +134,12 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
         try
         {
             system.ActorOf(
-                NavigationCoordinator.CreateProps(
-                    Props.Create(() => new FailingActor()),
-                    ActorRefs.Nobody,
-                    ActorRefs.Nobody));
+                Props.Create(
+                    () => new RuntimeFailureTestParent(
+                        NavigationCoordinator.CreateProps(
+                            Props.Create(() => new FailingActor()),
+                            ActorRefs.Nobody,
+                            ActorRefs.Nobody))));
 
             await system.WhenTerminated.WaitAsync(timeout.Token);
         }
@@ -187,5 +191,14 @@ public sealed class NavigationCoordinatorTargetDiscoveryTests
         public FailingConstructionActor() =>
             throw new InvalidOperationException(
                 "Target discovery owner construction failed.");
+    }
+
+    private sealed class RuntimeFailureTestParent : ReceiveActor
+    {
+        public RuntimeFailureTestParent(Props coordinatorProps)
+        {
+            Context.ActorOf(coordinatorProps);
+            Receive<RuntimeFailure>(_ => Context.System.Terminate());
+        }
     }
 }

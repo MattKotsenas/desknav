@@ -18,6 +18,7 @@ public sealed class NavigationCoordinator : ReceiveActor
         _targetDiscovery = Context.ActorOf(
             targetDiscoveryProps,
             "target-discovery");
+        Context.Watch(_targetDiscovery);
         _inputObserver = inputObserver;
         _overlayOwner = overlayOwner;
 
@@ -26,13 +27,16 @@ public sealed class NavigationCoordinator : ReceiveActor
         Receive<GestureObserved>(Handle);
         Receive<TargetDiscoveryCompleted>(Handle);
         Receive<TargetPresentationApplied>(Handle);
+        Receive<RuntimeFailure>(
+            failure => Context.Parent.Forward(failure));
+        Receive<Terminated>(Handle);
     }
 
     protected override SupervisorStrategy SupervisorStrategy() =>
         new OneForOneStrategy(
-            _ =>
+            exception =>
             {
-                Context.System.Terminate();
+                Context.Parent.Tell(new RuntimeFailure(exception));
                 return Directive.Stop;
             });
 
@@ -49,6 +53,20 @@ public sealed class NavigationCoordinator : ReceiveActor
                 targetDiscoveryProps,
                 inputObserver,
                 overlayOwner));
+    }
+
+    private void Handle(Terminated terminated)
+    {
+        if (!terminated.ActorRef.Equals(_targetDiscovery))
+        {
+            return;
+        }
+
+        Context.Parent.Tell(
+            new RuntimeFailure(
+                new InvalidOperationException(
+                    "The target discovery actor stopped unexpectedly.")));
+        Context.Stop(Self);
     }
 
     private void Handle(KeyboardLayerObserved observed)

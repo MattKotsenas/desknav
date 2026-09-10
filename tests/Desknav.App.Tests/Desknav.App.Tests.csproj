@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>$(DefaultTargetFramework)-windows</TargetFramework>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="xunit.v3.mtp-v2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Desknav.App\Desknav.App.csproj" />
+    <ProjectReference Include="..\..\src\Desknav.ControlPlane\Desknav.ControlPlane.csproj" />
+    <ProjectReference Include="..\..\src\Desknav.UI.Core\Desknav.UI.Core.csproj" />
+  </ItemGroup>
+
+</Project>

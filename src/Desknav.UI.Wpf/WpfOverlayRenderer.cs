@@ -163,7 +163,7 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
                 "Unknown target presentation."),
         };
 
-    private Task<T> InvokeAsync<T>(
+    private async Task<T> InvokeAsync<T>(
         Func<T> action,
         CancellationToken cancellationToken)
     {
@@ -171,15 +171,24 @@ public sealed class WpfOverlayRenderer : IOverlayRenderer
         if (_dispatcher.CheckAccess())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(action());
+            return action();
         }
 
-        return _dispatcher
-            .InvokeAsync(
-                action,
-                DispatcherPriority.Normal,
-                cancellationToken)
-            .Task;
+        try
+        {
+            return await _dispatcher
+                .InvokeAsync(
+                    action,
+                    DispatcherPriority.Normal,
+                    cancellationToken)
+                .Task
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
     }
 
     private Task InvokeAsync(Action action)

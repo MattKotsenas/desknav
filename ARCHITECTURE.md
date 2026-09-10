@@ -137,6 +137,37 @@ navigation workflow. That coordinator-local identity scopes workflow state.
 Boundary request and operation identities map results back to a workflow
 generation but do not substitute for it.
 
+### Desknav application
+
+`Desknav.App` is the outer composition root. Microsoft Generic Host owns the
+application lifetime and runs Kanata ingress as a background service.
+Akka.Hosting owns the actor system and creates one runtime guardian, which
+owns the local Kanata actor, control-plane coordinator, target-discovery
+owner, and overlay owner. Dependency injection supplies the configured
+loopback endpoint from validated host configuration, TCP parser and ingress,
+Windows UI Automation discovery, WPF dispatcher, and overlay renderer.
+
+Clean Kanata ingress completion requests host shutdown. Unexpected ingress or
+critical actor failure records the host's first fatal runtime outcome and
+requests the same shutdown path. Generic Host requests ingress shutdown before
+Akka.Hosting runs coordinated actor-system shutdown, which terminates the actor
+tree through Akka's lifecycle. Resource-owning actors initiate cancellation and
+release of outstanding work from `PostStop` and log eventual cleanup failure.
+The Host does not wait for that asynchronous cleanup or make its result part of
+the process exit code. Managed cleanup is best effort and is not a
+hard-process-termination guarantee.
+
+Actor restart is not a recovery policy by itself. The current runtime treats
+unexpected actor failure or permanent critical-child loss as fatal until that
+actor has an explicit reconstruction contract for connection identity,
+presentation ordering, outstanding work, and external resources. Expected UI
+Automation inability remains a typed discovery failure rather than a process
+failure. Later runtime recovery work is tracked in the backlog.
+
+The application can display the current discovered target map, but it does not
+accept label input until the local Kanata actor can establish the
+[capture-safe binding](#local-kanata-actor).
+
 ### Desknav UI
 
 Desknav UI hosts presentation and one-shot-action boundaries. Its overlay
@@ -324,9 +355,10 @@ from the coordinator and reconcile external state to that replica after
 completion, cancellation, reconnect, and restart. They do not author desired
 state.
 
-An unexpected failure of the coordinator or a boundary owner stops the
-application. Restarting must reconcile observable state and must not replay
-an ambiguous one-shot operation.
+An unexpected failure of ingress, the coordinator, or a boundary owner stops
+the application through Generic Host. The runtime guardian owns critical
+actor supervision and fatal actor policy. Restarting must reconcile observable
+state and must not replay an ambiguous one-shot operation.
 
 ## Verification
 

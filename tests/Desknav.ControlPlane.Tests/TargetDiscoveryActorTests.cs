@@ -85,6 +85,30 @@ public sealed class TargetDiscoveryActorTests
     }
 
     [Fact]
+    public async Task OperationDisposalReportsCancellationFailure()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var registration = cancellation.Token.Register(
+            () => throw new InvalidOperationException(
+                "Cancellation failed."));
+        var operation =
+            new TargetDiscoveryActor.DiscoveryOperation(
+                cancellation,
+                new RecordingCancelable(),
+                Task.CompletedTask);
+
+        Assert.True(
+            operation.TryRequestCancellation(out _));
+
+        var exception = await Assert.ThrowsAnyAsync<Exception>(
+            () => operation.DisposeAsync().AsTask());
+        Assert.Contains(
+            "Cancellation failed.",
+            exception.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReplacingTimeoutDisposesSupersededHandle()
     {
         using var cancellation = new CancellationTokenSource();
@@ -271,12 +295,13 @@ public sealed class TargetDiscoveryActorTests
             new DiscoverTargets(TargetDiscoveryRequestId.New()));
         var call = await harness.Discovery.ReadStartedCallAsync();
 
-        harness.System.Stop(harness.Actor);
+        harness.BeginShutdown();
         var canceled =
             await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
 
         Assert.Same(call, canceled.Call);
         call.Complete();
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
     }
 
     [Fact]
@@ -395,7 +420,8 @@ public sealed class TargetDiscoveryActorTests
             await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
 
         Assert.Same(first, canceled.Call);
-        first.Fail(new InvalidOperationException("Canceled call unwound."));
+        first.Fail(
+            new OperationCanceledException(first.CancellationToken));
 
         harness.Actor.Tell(new DiscoverTargets(secondRequestId));
         var second = await harness.Discovery.ReadStartedCallAsync();
@@ -674,8 +700,8 @@ public sealed class TargetDiscoveryActorTests
         harness.Actor.Tell(new CancelTargetDiscovery(requestId));
 
         await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
-        await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
         call.Complete();
+        await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
     }
 
     [Fact]
@@ -691,12 +717,12 @@ public sealed class TargetDiscoveryActorTests
         var canceled =
             await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
         Assert.Same(call, canceled.Call);
-        await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
         call.Complete();
+        await harness.System.WhenTerminated.WaitAsync(harness.TimeoutToken);
     }
 
     [Fact]
-    public async Task ShutdownCancelsEveryOperationWhenCallbacksThrow()
+    public async Task StoppingActorCancelsEveryOperationWhenCallbacksThrow()
     {
         await using var harness = await ActorHarness.CreateAsync(
             throwOnCancellation: true);
@@ -708,7 +734,7 @@ public sealed class TargetDiscoveryActorTests
             new DiscoverTargets(TargetDiscoveryRequestId.New()));
         var second = await harness.Discovery.ReadStartedCallAsync();
 
-        harness.System.Stop(harness.Actor);
+        harness.BeginShutdown();
         var firstCanceled =
             await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
         var secondCanceled =
@@ -720,6 +746,53 @@ public sealed class TargetDiscoveryActorTests
         Assert.Contains(second, canceledCalls);
         first.Complete();
         second.Complete();
+
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
+    }
+
+    [Fact]
+    public async Task StoppingActorCancelsWithPriorCancellationPending()
+    {
+        await using var harness = await ActorHarness.CreateAsync(
+            throwOnCancellation: true,
+            blockCancellationCallback: true);
+        var firstRequestId = TargetDiscoveryRequestId.New();
+
+        harness.Actor.Tell(new DiscoverTargets(firstRequestId));
+        var first = await harness.Discovery.ReadStartedCallAsync();
+        harness.Discovery.StopThrowingOnCancellation();
+        harness.Actor.Tell(new DiscoverTargets(
+            TargetDiscoveryRequestId.New()));
+        var second = await harness.Discovery.ReadStartedCallAsync();
+
+        harness.Actor.Tell(new CancelTargetDiscovery(firstRequestId));
+        await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
+        first.Complete();
+        await first.ExecutionEnded;
+        await harness.FlushActorAsync();
+
+        harness.BeginShutdown();
+        await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
+        harness.Discovery.ReleaseCancellationCallback();
+        second.Complete();
+
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
+    }
+
+    [Fact]
+    public async Task StoppingActorDoesNotWaitForDiscoveryCancellation()
+    {
+        await using var harness = await ActorHarness.CreateAsync();
+
+        harness.Actor.Tell(
+            new DiscoverTargets(TargetDiscoveryRequestId.New()));
+        var call = await harness.Discovery.ReadStartedCallAsync();
+
+        harness.BeginShutdown();
+        await harness.Discovery.ReadEventAsync<DiscoveryCanceled>();
+        await harness.Shutdown.WaitAsync(harness.TimeoutToken);
+
+        call.Complete();
     }
 
     private sealed class ActorHarness : IAsyncDisposable
@@ -759,12 +832,13 @@ public sealed class TargetDiscoveryActorTests
                 Props.Create(
                     () => new RecordingActor(
                         _coordinatorMessages.Writer)));
+            var props = TargetDiscoveryActor.CreateProps(
+                Discovery,
+                operationTimeout ?? TimeSpan.FromHours(1));
             _parent = System.ActorOf(
                 Props.Create(
                     () => new TargetDiscoveryTestParent(
-                        TargetDiscoveryActor.CreateProps(
-                            Discovery,
-                            operationTimeout ?? TimeSpan.FromHours(1)),
+                        props,
                         _coordinator)));
         }
 
@@ -774,6 +848,8 @@ public sealed class TargetDiscoveryActorTests
             ActorRefs.Nobody;
 
         public ControllableTargetDiscovery Discovery { get; }
+
+        public Task Shutdown { get; private set; } = Task.CompletedTask;
 
         public TestScheduler Scheduler =>
             (TestScheduler)System.Scheduler;
@@ -816,6 +892,13 @@ public sealed class TargetDiscoveryActorTests
         public async Task FlushActorAsync() =>
             await ActorTestHelpers.FlushAsync(Actor, TimeoutToken);
 
+        public void BeginShutdown()
+        {
+            Assert.True(Shutdown.IsCompleted);
+            Shutdown = Actor.GracefulStop(
+                TimeSpan.FromSeconds(10));
+        }
+
         public async Task AssertNoMoreCoordinatorMessagesAsync()
         {
             _coordinator.Tell(PoisonPill.Instance);
@@ -850,16 +933,28 @@ public sealed class TargetDiscoveryActorTests
     private sealed class TargetDiscoveryTestParent : ReceiveActor
     {
         private readonly IActorRef _coordinator;
+        private readonly IActorRef _targetDiscovery;
 
         public TargetDiscoveryTestParent(
             Props targetDiscoveryProps,
             IActorRef coordinator)
         {
-            Context.ActorOf(
+            _targetDiscovery = Context.ActorOf(
                 targetDiscoveryProps,
                 "target-discovery");
+            Context.Watch(_targetDiscovery);
             _coordinator = coordinator;
 
+            Receive<RuntimeFailure>(
+                _ => Context.System.Terminate());
+            Receive<Terminated>(
+                terminated =>
+                {
+                    if (terminated.ActorRef.Equals(_targetDiscovery))
+                    {
+                        Context.System.Terminate();
+                    }
+                });
             ReceiveAny(message => _coordinator.Forward(message));
         }
 

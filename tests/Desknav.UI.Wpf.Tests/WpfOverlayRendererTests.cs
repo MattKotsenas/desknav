@@ -164,8 +164,12 @@ public sealed class WpfOverlayRendererTests
         releaseDispatcher.Set();
         await blockingOperation;
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => preparation);
+        var exception =
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => preparation);
+        Assert.Equal(
+            cancellation.Token,
+            exception.CancellationToken);
     }
 
     [Fact]
@@ -377,8 +381,7 @@ public sealed class WpfOverlayRendererTests
 
             Assert.True(
                 await overlay.GracefulStop(
-                    TimeSpan.FromSeconds(3),
-                    PoisonPill.Instance));
+                    TimeSpan.FromSeconds(3)));
         }
         finally
         {

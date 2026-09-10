@@ -10,7 +10,7 @@ namespace Desknav.ControlPlane;
 /// Automation boundary. Reports successful and expected-failure outcomes
 /// to its parent.
 /// </summary>
-internal sealed class TargetDiscoveryActor : ReceiveActor
+public sealed class TargetDiscoveryActor : ReceiveActor
 {
     internal const int MaximumConcurrentOperations = 2;
 
@@ -21,6 +21,7 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     private readonly Dictionary<
         TargetDiscoveryRequestId,
         DiscoveryOperation> _operations = [];
+    private readonly HashSet<Task> _releases = [];
     private TargetDiscoveryRequestId? _pendingRequestId;
     private bool _isTerminating;
     private bool _isUnavailable;
@@ -37,6 +38,8 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         Receive<CancelTargetDiscovery>(Handle);
         Receive<DiscoveryFinished>(Handle);
         Receive<DiscoveryFaulted>(Handle);
+        Receive<DiscoveryReleased>(Handle);
+        Receive<DiscoveryReleaseFaulted>(Handle);
         Receive<CancellationFailed>(Handle);
         Receive<OperationTimedOut>(Handle);
         Receive<CancellationTimedOut>(Handle);
@@ -57,15 +60,7 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     }
 
     protected override void PostStop()
-    {
-        foreach (var operation in _operations.Values)
-        {
-            operation.CancelTimeout();
-            _ = CancelDuringShutdownAsync(operation);
-        }
-
-        base.PostStop();
-    }
+        => ObserveBestEffortCleanup(CleanupAsync());
 
     private void Handle(DiscoverTargets discover)
     {
@@ -169,10 +164,7 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
             return;
         }
 
-        _ = ReleaseOperationAsync(
-            finished.RequestId,
-            operation,
-            Self);
+        ReleaseOperation(finished.RequestId, operation);
         if (_isTerminating || _isUnavailable)
         {
             return;
@@ -191,21 +183,23 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
     private void Handle(DiscoveryFaulted faulted)
     {
-        if (_operations.Remove(faulted.RequestId, out var operation))
+        DiscoveryOperation? operation = null;
+        if (_operations.Remove(faulted.RequestId, out operation))
         {
-            _ = ReleaseOperationAsync(
-                faulted.RequestId,
-                operation,
-                Self);
+            ReleaseOperation(faulted.RequestId, operation);
         }
 
-        if (_isUnavailable)
+        if (operation is not null
+            && IsExpectedCancellation(
+                faulted.Cause,
+                operation.CancellationToken))
         {
             _log.Debug(
                 faulted.Cause,
-                "Target discovery request {0} faulted after the owner"
-                + " became unavailable.",
+                "Canceled target discovery request {0} faulted while"
+                + " unwinding.",
                 faulted.RequestId);
+            StartPendingDiscovery();
             return;
         }
 
@@ -215,11 +209,13 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
             faulted.RequestId);
     }
 
-    private void Handle(CancellationFailed failed) =>
+    private void Handle(CancellationFailed failed)
+    {
         StopApplication(
             failed.Cause,
             "Cancellation of target discovery request {0} failed.",
             failed.RequestId);
+    }
 
     private void Handle(OperationTimedOut timedOut)
     {
@@ -301,14 +297,45 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         string message,
         TargetDiscoveryRequestId requestId)
     {
+        _coordinator.Tell(new RuntimeFailure(cause));
         if (_isTerminating)
         {
             return;
         }
-
         _isTerminating = true;
         _log.Error(cause, message, requestId);
-        Context.System.Terminate();
+    }
+
+    private Task CleanupAsync()
+    {
+        var cleanups = new List<Task>(
+            _operations.Count + _releases.Count);
+        foreach (var operation in _operations.Values)
+        {
+            cleanups.Add(CancelAfterStopAsync(operation));
+        }
+        _operations.Clear();
+        cleanups.AddRange(_releases);
+        _releases.Clear();
+        return Task.WhenAll(cleanups);
+    }
+
+    private void ObserveBestEffortCleanup(Task cleanup)
+    {
+        _ = cleanup.ContinueWith(
+            completed =>
+            {
+                var cause = (Exception?)completed.Exception
+                    ?? new TaskCanceledException(completed);
+                _log.Error(
+                    cause,
+                    "Best-effort target discovery cleanup failed after"
+                    + " actor stop.");
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously
+            | TaskContinuationOptions.NotOnRanToCompletion,
+            TaskScheduler.Default);
     }
 
     private void StartPendingDiscovery()
@@ -320,6 +347,35 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
         _pendingRequestId = null;
         StartDiscovery(requestId);
+    }
+
+    private void ReleaseOperation(
+        TargetDiscoveryRequestId requestId,
+        DiscoveryOperation operation)
+    {
+        var release = operation.DisposeAsync().AsTask();
+        _releases.Add(release);
+        release.PipeTo(
+            Self,
+            Self,
+            () => new DiscoveryReleased(release),
+            exception => new DiscoveryReleaseFaulted(
+                requestId,
+                release,
+                exception));
+    }
+
+    private void Handle(DiscoveryReleased released) =>
+        _releases.Remove(released.Release);
+
+    private void Handle(DiscoveryReleaseFaulted faulted)
+    {
+        _releases.Remove(faulted.Release);
+        StopApplication(
+            faulted.Cause,
+            "Release of target discovery request {0} faulted"
+            + " unexpectedly.",
+            faulted.RequestId);
     }
 
     private static async Task ObserveCancellationAsync(
@@ -339,51 +395,28 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         }
     }
 
-    private async Task CancelDuringShutdownAsync(
+    private async Task CancelAfterStopAsync(
         DiscoveryOperation operation)
     {
         try
         {
-            if (operation.TryRequestCancellation(out var cancellation))
+            operation.TryRequestCancellation(out _);
+            try
             {
-                await cancellation.ConfigureAwait(false);
+                await operation.Execution.ConfigureAwait(false);
             }
-        }
-        catch (Exception exception)
-        {
-            _log.Error(
-                exception,
-                "Target discovery cancellation failed during shutdown.");
+            catch (Exception exception)
+                when (IsExpectedCancellation(
+                    exception,
+                    operation.CancellationToken))
+            {
+                _log.Debug(
+                    "Canceled target discovery ended during actor stop.");
+            }
         }
         finally
         {
-            try
-            {
-                await operation.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                _log.Error(
-                    exception,
-                    "Target discovery cleanup failed during shutdown.");
-            }
-        }
-    }
-
-    private static async Task ReleaseOperationAsync(
-        TargetDiscoveryRequestId requestId,
-        DiscoveryOperation operation,
-        IActorRef owner)
-    {
-        try
-        {
             await operation.DisposeAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            owner.Tell(
-                new DiscoveryFaulted(requestId, exception),
-                owner);
         }
     }
 
@@ -391,29 +424,13 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         TargetDiscoveryRequestId requestId,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var result = await _discovery
-                .DiscoverAsync(cancellationToken)
-                .ConfigureAwait(false);
-            return new DiscoveryFinished(
-                requestId,
-                cancellationToken.IsCancellationRequested,
-                result);
-        }
-        catch (Exception exception)
-            when (cancellationToken.IsCancellationRequested)
-        {
-            _log.Debug(
-                exception,
-                "Canceled target discovery request {0} faulted while"
-                + " unwinding.",
-                requestId);
-            return new DiscoveryFinished(
-                requestId,
-                WasCancellationRequested: true,
-                new TargetDiscoveryResult.Failed());
-        }
+        var result = await _discovery
+            .DiscoverAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new DiscoveryFinished(
+            requestId,
+            cancellationToken.IsCancellationRequested,
+            result);
     }
 
     /// <summary>
@@ -431,6 +448,13 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     /// </summary>
     private sealed record DiscoveryFaulted(
         TargetDiscoveryRequestId RequestId,
+        Exception Cause);
+
+    private sealed record DiscoveryReleased(Task Release);
+
+    private sealed record DiscoveryReleaseFaulted(
+        TargetDiscoveryRequestId RequestId,
+        Task Release,
         Exception Cause);
 
     /// <summary>
@@ -458,17 +482,31 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
     /// one running discovery.
     /// </summary>
     // Internal so resource lifetime can be tested without actor timing.
-    internal sealed class DiscoveryOperation(
-        CancellationTokenSource cancellation,
-        ICancelable timeout,
-        Task execution)
-        : IAsyncDisposable
+    internal sealed class DiscoveryOperation : IAsyncDisposable
     {
-        private ICancelable _timeout = timeout;
+        private readonly CancellationTokenSource _cancellationSource;
+        private readonly CancellationToken _cancellationToken;
+        private ICancelable _timeout;
         private Task _cancellation = Task.CompletedTask;
         private bool _isDisposed;
 
+        public DiscoveryOperation(
+            CancellationTokenSource cancellation,
+            ICancelable timeout,
+            Task execution)
+        {
+            _cancellationSource = cancellation;
+            _cancellationToken = cancellation.Token;
+            _timeout = timeout;
+            Execution = execution;
+        }
+
         public bool CancellationRequested { get; private set; }
+
+        public CancellationToken CancellationToken =>
+            _cancellationToken;
+
+        public Task Execution { get; }
 
         public bool CancellationExpired { get; set; }
 
@@ -482,7 +520,7 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
             }
 
             CancellationRequested = true;
-            _cancellation = cancellation.CancelAsync();
+            _cancellation = _cancellationSource.CancelAsync();
             cancellationTask = _cancellation;
             return true;
         }
@@ -509,11 +547,16 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
 
             ReleaseTimeout();
             _isDisposed = true;
-            await execution.ConfigureAwait(
+            await Execution.ConfigureAwait(
                 ConfigureAwaitOptions.SuppressThrowing);
-            await _cancellation.ConfigureAwait(
-                ConfigureAwaitOptions.SuppressThrowing);
-            cancellation.Dispose();
+            try
+            {
+                await _cancellation.ConfigureAwait(false);
+            }
+            finally
+            {
+                _cancellationSource.Dispose();
+            }
         }
 
         private void DisposeTimeout()
@@ -533,6 +576,13 @@ internal sealed class TargetDiscoveryActor : ReceiveActor
         private void ThrowIfDisposed() =>
             ObjectDisposedException.ThrowIf(_isDisposed, this);
     }
+
+    private static bool IsExpectedCancellation(
+        Exception exception,
+        CancellationToken cancellationToken) =>
+        cancellationToken.IsCancellationRequested
+        && exception is OperationCanceledException canceled
+        && canceled.CancellationToken == cancellationToken;
 }
 
 /// <summary>
@@ -543,8 +593,9 @@ public interface ITargetDiscovery
     /// <summary>
     /// Performs one target enumeration. Expected inability to enumerate
     /// returns <see cref="TargetDiscoveryResult.Failed"/>; throwing is an
-    /// unexpected application failure. Cancellation is cooperative and may end
-    /// by returning or throwing.
+    /// unexpected application failure. An expected cancellation throws an
+    /// <see cref="OperationCanceledException"/> carrying the supplied token;
+    /// the operation may also return after cancellation.
     /// </summary>
     Task<TargetDiscoveryResult> DiscoverAsync(
         CancellationToken cancellationToken);

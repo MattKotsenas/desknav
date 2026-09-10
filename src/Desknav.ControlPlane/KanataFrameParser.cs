@@ -2,12 +2,12 @@ using System.Text.Json;
 
 namespace Desknav.ControlPlane;
 
-internal interface IKanataFrameParser
+public interface IKanataFrameParser
 {
     KanataServerFrame Parse(string json);
 }
 
-internal sealed class KanataFrameParser : IKanataFrameParser
+public sealed class KanataFrameParser : IKanataFrameParser
 {
     public KanataServerFrame Parse(string json)
     {
