@@ -626,17 +626,12 @@ public sealed class OverlayActorTests
             var actorCreated =
                 new TaskCompletionSource<IActorRef>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
-            var failure =
-                new TaskCompletionSource<RuntimeFailure>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
             System.ActorOf(
                 Props.Create(
                     () => new OverlayTestParent(
                         OverlayActor.CreateProps(Renderer),
-                        actorCreated,
-                        failure)));
+                        actorCreated)));
             Actor = actorCreated.Task.GetAwaiter().GetResult();
-            Failure = failure.Task;
         }
 
         public ActorSystem System { get; }
@@ -644,8 +639,6 @@ public sealed class OverlayActorTests
         public IActorRef Actor { get; }
 
         public ControllableOverlayRenderer Renderer { get; }
-
-        public Task<RuntimeFailure> Failure { get; }
 
         public Task Shutdown { get; private set; } = Task.CompletedTask;
 
@@ -715,19 +708,14 @@ public sealed class OverlayActorTests
 
             public OverlayTestParent(
                 Props overlayProps,
-                TaskCompletionSource<IActorRef> actorCreated,
-                TaskCompletionSource<RuntimeFailure> failure)
+                TaskCompletionSource<IActorRef> actorCreated)
             {
                 _overlay = Context.ActorOf(overlayProps, "overlay");
                 Context.Watch(_overlay);
                 actorCreated.TrySetResult(_overlay);
 
                 Receive<RuntimeFailure>(
-                    reported =>
-                    {
-                        failure.TrySetResult(reported);
-                        Context.System.Terminate();
-                    });
+                    _ => Context.System.Terminate());
                 Receive<Terminated>(
                     terminated =>
                     {

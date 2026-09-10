@@ -809,8 +809,6 @@ public sealed class TargetDiscoveryActorTests
         private readonly CancellationTokenSource _timeout;
         private readonly IActorRef _coordinator;
         private readonly IActorRef _parent;
-        private readonly TaskCompletionSource<RuntimeFailure> _failure =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private ActorHarness(
             bool throwOnCancellation,
@@ -841,8 +839,7 @@ public sealed class TargetDiscoveryActorTests
                 Props.Create(
                     () => new TargetDiscoveryTestParent(
                         props,
-                        _coordinator,
-                        _failure)));
+                        _coordinator)));
         }
 
         public ActorSystem System { get; }
@@ -851,8 +848,6 @@ public sealed class TargetDiscoveryActorTests
             ActorRefs.Nobody;
 
         public ControllableTargetDiscovery Discovery { get; }
-
-        public Task<RuntimeFailure> Failure => _failure.Task;
 
         public Task Shutdown { get; private set; } = Task.CompletedTask;
 
@@ -942,8 +937,7 @@ public sealed class TargetDiscoveryActorTests
 
         public TargetDiscoveryTestParent(
             Props targetDiscoveryProps,
-            IActorRef coordinator,
-            TaskCompletionSource<RuntimeFailure> failure)
+            IActorRef coordinator)
         {
             _targetDiscovery = Context.ActorOf(
                 targetDiscoveryProps,
@@ -952,11 +946,7 @@ public sealed class TargetDiscoveryActorTests
             _coordinator = coordinator;
 
             Receive<RuntimeFailure>(
-                reported =>
-                {
-                    failure.TrySetResult(reported);
-                    Context.System.Terminate();
-                });
+                _ => Context.System.Terminate());
             Receive<Terminated>(
                 terminated =>
                 {

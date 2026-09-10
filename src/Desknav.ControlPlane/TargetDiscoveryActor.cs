@@ -503,8 +503,6 @@ public sealed class TargetDiscoveryActor : ReceiveActor
 
         public bool CancellationRequested { get; private set; }
 
-        public Task Cancellation => _cancellation;
-
         public CancellationToken CancellationToken =>
             _cancellationToken;
 
