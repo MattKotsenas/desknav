@@ -23,6 +23,8 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         DiscoveryOperation> _operations = [];
     private readonly HashSet<Task> _releases = [];
     private TargetDiscoveryRequestId? _pendingRequestId;
+    private Task? _shutdownCleanup;
+    private bool _cleanupFailureHandled;
     private bool _isShuttingDown;
     private bool _isTerminating;
     private bool _isUnavailable;
@@ -61,6 +63,15 @@ public sealed class TargetDiscoveryActor : ReceiveActor
             () => new TargetDiscoveryActor(
                 discovery,
                 operationTimeout));
+    }
+
+    protected override void PostStop()
+    {
+        _shutdownCleanup ??= CleanupAsync();
+        if (!_cleanupFailureHandled)
+        {
+            ObserveBestEffortCleanup(_shutdownCleanup);
+        }
     }
 
     private void Handle(DiscoverTargets discover)
@@ -326,17 +337,8 @@ public sealed class TargetDiscoveryActor : ReceiveActor
 
         _isShuttingDown = true;
         _isTerminating = true;
-        Task cleanup;
-        try
-        {
-            cleanup = CleanupAsync();
-        }
-        catch (Exception exception)
-        {
-            cleanup = Task.FromException(exception);
-        }
-
-        cleanup.PipeTo(
+        _shutdownCleanup = CleanupAsync();
+        _shutdownCleanup.PipeTo(
             Self,
             Self,
             () => new ShutdownCleanupCompleted(),
@@ -345,6 +347,7 @@ public sealed class TargetDiscoveryActor : ReceiveActor
 
     private void Handle(ShutdownCleanupFaulted faulted)
     {
+        _cleanupFailureHandled = true;
         _coordinator.Tell(new RuntimeFailure(faulted.Cause));
         _log.Error(faulted.Cause, "Target discovery cleanup failed.");
         Context.Stop(Self);
@@ -361,7 +364,25 @@ public sealed class TargetDiscoveryActor : ReceiveActor
         _operations.Clear();
         cleanups.AddRange(_releases);
         _releases.Clear();
-        return AwaitCleanupAsync(cleanups);
+        return Task.WhenAll(cleanups);
+    }
+
+    private void ObserveBestEffortCleanup(Task cleanup)
+    {
+        _ = cleanup.ContinueWith(
+            completed =>
+            {
+                var cause = (Exception?)completed.Exception
+                    ?? new TaskCanceledException(completed);
+                _log.Error(
+                    cause,
+                    "Best-effort target discovery cleanup failed after"
+                    + " actor stop.");
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously
+            | TaskContinuationOptions.NotOnRanToCompletion,
+            TaskScheduler.Default);
     }
 
     private void StartPendingDiscovery()
@@ -429,70 +450,25 @@ public sealed class TargetDiscoveryActor : ReceiveActor
     private async Task CancelDuringShutdownAsync(
         DiscoveryOperation operation)
     {
-        var failures = new List<Exception>();
         try
         {
             operation.TryRequestCancellation(out _);
-        }
-        catch (Exception exception)
-        {
-            failures.Add(exception);
-        }
-
-        try
-        {
-            await operation.Execution.ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            if (!IsExpectedCancellation(
+            try
+            {
+                await operation.Execution.ConfigureAwait(false);
+            }
+            catch (Exception exception)
+                when (IsExpectedCancellation(
                     exception,
                     operation.CancellationToken))
             {
-                failures.Add(exception);
+                _log.Debug(
+                    "Canceled target discovery ended during shutdown.");
             }
         }
-
-        try
+        finally
         {
             await operation.DisposeAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            failures.Add(exception);
-        }
-
-        if (failures.Count > 0)
-        {
-            throw new AggregateException(
-                "Target discovery cleanup failed.",
-                failures);
-        }
-    }
-
-    private static async Task AwaitCleanupAsync(
-        IReadOnlyCollection<Task> cleanups)
-    {
-        await Task.WhenAll(cleanups).ConfigureAwait(
-            ConfigureAwaitOptions.SuppressThrowing);
-        var failures = new List<Exception>();
-        foreach (var cleanup in cleanups)
-        {
-            if (cleanup.Exception is { } exception)
-            {
-                failures.AddRange(exception.InnerExceptions);
-            }
-            else if (cleanup.IsCanceled)
-            {
-                failures.Add(new TaskCanceledException(cleanup));
-            }
-        }
-
-        if (failures.Count > 0)
-        {
-            throw new AggregateException(
-                "Target discovery cleanup failed.",
-                failures);
         }
     }
 

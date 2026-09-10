@@ -10,16 +10,9 @@ internal sealed class KanataIngressService(
     KanataTcpIngress ingress,
     IRequiredActor<RuntimeGuardian> runtime,
     IHostApplicationLifetime applicationLifetime,
-    RuntimeStatus status)
+    RuntimeOutcome outcome)
     : BackgroundService
 {
-    public override Task StopAsync(CancellationToken _)
-    {
-        // Ingress must finish before runtime cleanup and actor-system shutdown,
-        // even when an external host-stop token expires.
-        return base.StopAsync(CancellationToken.None);
-    }
-
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
@@ -37,7 +30,7 @@ internal sealed class KanataIngressService(
         }
         catch (Exception exception)
         {
-            status.RecordFailure(exception);
+            outcome.RecordFailure(exception);
             throw;
         }
 

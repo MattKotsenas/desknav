@@ -144,16 +144,25 @@ application lifetime and runs Kanata ingress as a background service.
 Akka.Hosting owns the actor system and creates one runtime guardian, which
 owns the local Kanata actor, control-plane coordinator, target-discovery
 owner, and overlay owner. Dependency injection supplies the configured
-loopback endpoint, TCP parser and ingress, Windows UI Automation discovery,
-WPF dispatcher, and overlay renderer.
+loopback endpoint from validated host configuration, TCP parser and ingress,
+Windows UI Automation discovery, WPF dispatcher, and overlay renderer.
 
 Clean Kanata ingress completion requests host shutdown. Unexpected ingress or
-critical actor failure records an unsuccessful runtime outcome and requests
-the same shutdown path. Generic Host stops ingress first, then its runtime
-shutdown service asks the guardian to stop its critical children. Boundary
-owners stop accepting work, cancel and await their owned operations, release
-their resources, and stop only after cleanup completes. Akka.Hosting runs
-coordinated actor-system shutdown only after those critical children stop.
+critical actor failure records the host's first fatal runtime outcome and
+requests the same shutdown path. Generic Host requests ingress shutdown before
+Akka.Hosting runs coordinated actor-system shutdown. Its final application
+phase asks the guardian to stop its critical children. Boundary owners stop
+accepting work and attempt to cancel and release their owned resources. The
+guardian request waits up to five seconds inside a six-second phase; request
+timeout records a fatal outcome and actor-system shutdown continues. Managed
+cleanup is best effort and is not a hard-process-termination guarantee.
+
+Actor restart is not a recovery policy by itself. The current runtime treats
+unexpected actor failure or permanent critical-child loss as fatal until that
+actor has an explicit reconstruction contract for connection identity,
+presentation ordering, outstanding work, and external resources. Expected UI
+Automation inability remains a typed discovery failure rather than a process
+failure. Later runtime recovery work is tracked in the backlog.
 
 The application can display the current discovered target map, but it does not
 accept label input until the local Kanata actor can establish the

@@ -9,13 +9,17 @@ using Desknav.UI;
 
 namespace Desknav.App;
 
+/// <summary>
+/// Owns the critical local actor graph and translates unrecoverable component
+/// loss into host shutdown.
+/// </summary>
 internal sealed class RuntimeGuardian : ReceiveActor
 {
     private static readonly TimeSpan TargetDiscoveryTimeout =
         TimeSpan.FromSeconds(5);
 
     private readonly IHostApplicationLifetime _applicationLifetime;
-    private readonly RuntimeStatus _status;
+    private readonly RuntimeOutcome _outcome;
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly IActorRef _overlay;
     private readonly IActorRef _coordinator;
@@ -28,10 +32,10 @@ internal sealed class RuntimeGuardian : ReceiveActor
         ITargetDiscovery targetDiscovery,
         IOverlayRenderer overlayRenderer,
         IHostApplicationLifetime applicationLifetime,
-        RuntimeStatus status)
+        RuntimeOutcome outcome)
     {
         _applicationLifetime = applicationLifetime;
-        _status = status;
+        _outcome = outcome;
 
         _overlay = Context.ActorOf(
             OverlayActor.CreateProps(overlayRenderer),
@@ -64,7 +68,7 @@ internal sealed class RuntimeGuardian : ReceiveActor
             exception =>
             {
                 StopApplication(exception);
-                return Directive.Resume;
+                return Directive.Stop;
             });
 
     private void Handle(PrepareForShutdown _)
@@ -123,7 +127,7 @@ internal sealed class RuntimeGuardian : ReceiveActor
 
     private void StopApplication(Exception cause)
     {
-        _status.RecordFailure(cause);
+        _outcome.RecordFailure(cause);
         _log.Error(cause, "A critical Desknav component failed.");
         _applicationLifetime.StopApplication();
     }

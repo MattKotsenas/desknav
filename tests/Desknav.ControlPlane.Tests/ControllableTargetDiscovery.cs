@@ -14,7 +14,7 @@ internal sealed class ControllableTargetDiscovery : ITargetDiscovery
                 SingleWriter = false,
             });
     private readonly CancellationToken _timeout;
-    private readonly bool _throwOnCancellation;
+    private bool _throwOnCancellation;
     private readonly bool _blockSynchronousPrefix;
     private readonly bool _blockCancellationCallback;
     private readonly TaskCompletionSource _prefixRelease = new();
@@ -48,7 +48,9 @@ internal sealed class ControllableTargetDiscovery : ITargetDiscovery
         DiscoveryCall? call = null;
         try
         {
-            if (_throwOnCancellation || _blockCancellationCallback)
+            var throwOnCancellation =
+                Volatile.Read(ref _throwOnCancellation);
+            if (throwOnCancellation || _blockCancellationCallback)
             {
                 cancellationToken.Register(
                     () =>
@@ -59,7 +61,7 @@ internal sealed class ControllableTargetDiscovery : ITargetDiscovery
                                 .GetAwaiter()
                                 .GetResult();
                         }
-                        if (_throwOnCancellation)
+                        if (throwOnCancellation)
                         {
                             throw new InvalidOperationException(
                                 "Cancellation callback failed.");
@@ -121,6 +123,9 @@ internal sealed class ControllableTargetDiscovery : ITargetDiscovery
 
     public void ReleaseCancellationCallback() =>
         _callbackRelease.SetResult();
+
+    public void StopThrowingOnCancellation() =>
+        Volatile.Write(ref _throwOnCancellation, false);
 
     public void CompleteEvents() => _events.Writer.TryComplete();
 }

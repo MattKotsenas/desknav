@@ -43,6 +43,9 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
     public void FailCancellation(Exception exception) =>
         Volatile.Write(ref _cancellationFailure, exception);
 
+    public void StopFailingCancellation() =>
+        Volatile.Write(ref _cancellationFailure, null);
+
     public void BlockCancellation() =>
         Volatile.Write(ref _blockCancellation, true);
 
@@ -80,6 +83,8 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
         TargetPresentation presentation,
         CancellationToken cancellationToken)
     {
+        var cancellationFailure =
+            Volatile.Read(ref _cancellationFailure);
         var call = new PreparationCall(
             presentation,
             cancellationToken,
@@ -88,7 +93,7 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
         WriteEvent(new PreparationStarted(call));
 
         if (Volatile.Read(ref _blockCancellation)
-            || Volatile.Read(ref _cancellationFailure) is not null)
+            || cancellationFailure is not null)
         {
             cancellationToken.Register(
                 () =>
@@ -99,8 +104,7 @@ internal sealed class ControllableOverlayRenderer : IOverlayRenderer
                             .GetAwaiter()
                             .GetResult();
                     }
-                    if (Volatile.Read(
-                            ref _cancellationFailure) is { } failure)
+                    if (cancellationFailure is { } failure)
                     {
                         throw failure;
                     }

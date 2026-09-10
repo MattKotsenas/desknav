@@ -19,35 +19,23 @@ namespace Desknav.App.Tests;
 public sealed class HostedRuntimeTests
 {
     [Fact]
-    public async Task RuntimeDisablesAkkaClrShutdownHook()
+    public async Task MissingEndpointReturnsUsageExitCode()
     {
-        using var timeout =
-            new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        using var host = CreateHost(
-            (IPEndPoint)listener.LocalEndpoint,
-            new FakeTargetDiscovery(Targets()),
-            new RecordingOverlayRenderer());
+        var exitCode = await App.RunAsync(
+            [],
+            Dispatcher.CurrentDispatcher);
 
-        try
-        {
-            await host.StartAsync(timeout.Token);
+        Assert.Equal(2, exitCode);
+    }
 
-            var actorSystem =
-                host.Services.GetRequiredService<ActorSystem>();
+    [Fact]
+    public async Task NonLoopbackEndpointReturnsUsageExitCode()
+    {
+        var exitCode = await App.RunAsync(
+            ["--kanata-endpoint", "192.0.2.1:1234"],
+            Dispatcher.CurrentDispatcher);
 
-            Assert.False(
-                actorSystem.Settings.Config.GetBoolean(
-                    "akka.coordinated-shutdown"
-                    + ".run-by-clr-shutdown-hook"));
-
-            await host.StopAsync(timeout.Token);
-        }
-        finally
-        {
-            listener.Stop();
-        }
+        Assert.Equal(2, exitCode);
     }
 
     [Fact]
@@ -156,11 +144,11 @@ public sealed class HostedRuntimeTests
 
             await shutdown;
 
-            var status = host.Services.GetRequiredService<RuntimeStatus>();
+            var outcome = host.Services.GetRequiredService<RuntimeOutcome>();
             Assert.Equal(
                 "Unexpected overlay failure.",
                 Assert.IsType<InvalidOperationException>(
-                    status.Failure).Message);
+                    outcome.Failure).Message);
         }
         finally
         {
@@ -195,11 +183,11 @@ public sealed class HostedRuntimeTests
 
             await shutdown;
 
-            var status = host.Services.GetRequiredService<RuntimeStatus>();
+            var outcome = host.Services.GetRequiredService<RuntimeOutcome>();
             Assert.Equal(
                 "Unexpected discovery failure.",
                 Assert.IsType<InvalidOperationException>(
-                    status.Failure).Message);
+                    outcome.Failure).Message);
         }
         finally
         {
@@ -208,7 +196,82 @@ public sealed class HostedRuntimeTests
     }
 
     [Fact]
-    public async Task HostWaitsForOverlayCleanup()
+    public async Task ForcedOverlayStopAttemptsSceneCleanup()
+    {
+        using var timeout =
+            new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var renderer = new BlockingCleanupRenderer();
+        using var host = CreateHost(
+            (IPEndPoint)listener.LocalEndpoint,
+            new FakeTargetDiscovery(Targets()),
+            renderer);
+
+        try
+        {
+            await host.StartAsync(timeout.Token);
+            using var client =
+                await listener.AcceptTcpClientAsync(timeout.Token);
+            await using var writer = CreateWriter(client);
+            await WriteTargetCommandAsync(writer);
+            await renderer.Activated.WaitAsync(timeout.Token);
+
+            var system = host.Services.GetRequiredService<ActorSystem>();
+            system.ActorSelection("/user/runtime/overlay").Tell(Kill.Instance);
+
+            await renderer.DisposalStarted.WaitAsync(timeout.Token);
+            renderer.FinishDisposal();
+            await host.WaitForShutdownAsync(timeout.Token);
+        }
+        finally
+        {
+            renderer.FinishDisposal();
+            listener.Stop();
+        }
+    }
+
+    [Fact]
+    public async Task ForcedDiscoveryStopAttemptsOperationCancellation()
+    {
+        using var timeout =
+            new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var discovery = new BlockingTargetDiscovery();
+        using var host = CreateHost(
+            (IPEndPoint)listener.LocalEndpoint,
+            discovery,
+            new RecordingOverlayRenderer());
+
+        try
+        {
+            await host.StartAsync(timeout.Token);
+            using var client =
+                await listener.AcceptTcpClientAsync(timeout.Token);
+            await using var writer = CreateWriter(client);
+            await WriteTargetCommandAsync(writer);
+            await discovery.Started.WaitAsync(timeout.Token);
+
+            var system = host.Services.GetRequiredService<ActorSystem>();
+            system
+                .ActorSelection(
+                    "/user/runtime/coordinator/target-discovery")
+                .Tell(Kill.Instance);
+
+            await discovery.CancellationRequested.WaitAsync(timeout.Token);
+            discovery.FinishCancellation();
+            await host.WaitForShutdownAsync(timeout.Token);
+        }
+        finally
+        {
+            discovery.FinishCancellation();
+            listener.Stop();
+        }
+    }
+
+    [Fact]
+    public async Task HostWaitsForOverlayCleanupWithinBudget()
     {
         using var timeout =
             new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -234,20 +297,53 @@ public sealed class HostedRuntimeTests
             await renderer.DisposalStarted.WaitAsync(timeout.Token);
 
             Assert.False(shutdown.IsCompleted);
-            using (var phaseTimeout =
-                   new CancellationTokenSource(TimeSpan.FromSeconds(6)))
-            {
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                    () => shutdown.WaitAsync(phaseTimeout.Token));
-            }
-
             renderer.FinishDisposal();
             await shutdown;
             Assert.Null(
-                host.Services.GetRequiredService<RuntimeStatus>().Failure);
+                host.Services.GetRequiredService<RuntimeOutcome>().Failure);
         }
         finally
         {
+            listener.Stop();
+        }
+    }
+
+    [Fact]
+    public async Task HostStopsWhenOverlayCleanupExceedsBudget()
+    {
+        using var timeout =
+            new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var renderer = new BlockingCleanupRenderer();
+        using var host = CreateHost(
+            (IPEndPoint)listener.LocalEndpoint,
+            new FakeTargetDiscovery(Targets()),
+            renderer);
+
+        try
+        {
+            await host.StartAsync(timeout.Token);
+            var shutdown = host.WaitForShutdownAsync(timeout.Token);
+            using var client =
+                await listener.AcceptTcpClientAsync(timeout.Token);
+            await using var writer = CreateWriter(client);
+
+            await WriteTargetCommandAsync(writer);
+            await renderer.Activated.WaitAsync(timeout.Token);
+            client.Close();
+            await renderer.DisposalStarted.WaitAsync(timeout.Token);
+
+            await shutdown;
+
+            Assert.IsType<TimeoutException>(
+                host.Services
+                    .GetRequiredService<RuntimeOutcome>()
+                    .Failure);
+        }
+        finally
+        {
+            renderer.FinishDisposal();
             listener.Stop();
         }
     }
@@ -283,7 +379,7 @@ public sealed class HostedRuntimeTests
             discovery.FinishCancellation();
             await shutdown;
             Assert.Null(
-                host.Services.GetRequiredService<RuntimeStatus>().Failure);
+                host.Services.GetRequiredService<RuntimeOutcome>().Failure);
         }
         finally
         {
@@ -322,7 +418,7 @@ public sealed class HostedRuntimeTests
             await renderer.DisposalStarted.WaitAsync(timeout.Token);
             await shutdown;
             Assert.Null(
-                host.Services.GetRequiredService<RuntimeStatus>().Failure);
+                host.Services.GetRequiredService<RuntimeOutcome>().Failure);
         }
         finally
         {
@@ -362,55 +458,11 @@ public sealed class HostedRuntimeTests
 
             Assert.IsType<OperationCanceledException>(
                 host.Services
-                    .GetRequiredService<RuntimeStatus>()
+                    .GetRequiredService<RuntimeOutcome>()
                     .Failure);
         }
         finally
         {
-            listener.Stop();
-        }
-    }
-
-    [Fact]
-    public async Task CanceledStopTokenDoesNotOutrunIngress()
-    {
-        using var timeout =
-            new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var parser = new BlockingReturningFrameParser();
-        using var host = CreateHost(
-            (IPEndPoint)listener.LocalEndpoint,
-            new FakeTargetDiscovery(Targets()),
-            new RecordingOverlayRenderer(),
-            parser);
-
-        try
-        {
-            await host.StartAsync(timeout.Token);
-            using var client =
-                await listener.AcceptTcpClientAsync(timeout.Token);
-            await using var writer = CreateWriter(client);
-            await writer.WriteLineAsync("{}");
-            await parser.Started.WaitAsync(timeout.Token);
-
-            using var stopWait = new CancellationTokenSource();
-            var stop = host.StopAsync(stopWait.Token);
-            stopWait.Cancel();
-
-            using (var phaseTimeout =
-                   new CancellationTokenSource(TimeSpan.FromSeconds(1)))
-            {
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                    () => stop.WaitAsync(phaseTimeout.Token));
-            }
-
-            parser.Finish();
-            await stop.WaitAsync(timeout.Token);
-        }
-        finally
-        {
-            parser.Finish();
             listener.Stop();
         }
     }
@@ -421,7 +473,7 @@ public sealed class HostedRuntimeTests
         IOverlayRenderer renderer,
         IKanataFrameParser? parser = null) =>
         DesknavRuntime.CreateHostBuilder(
-                endpoint,
+                ["--kanata-endpoint", endpoint.ToString()],
                 Dispatcher.CurrentDispatcher)
             .ConfigureServices(
                 (_, services) =>
@@ -643,25 +695,6 @@ public sealed class HostedRuntimeTests
         }
 
         public void Fail() => _fail.TrySetResult(true);
-    }
-
-    private sealed class BlockingReturningFrameParser : IKanataFrameParser
-    {
-        private readonly TaskCompletionSource<bool> _started =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource<bool> _finish =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public Task Started => _started.Task;
-
-        public KanataServerFrame Parse(string json)
-        {
-            _started.TrySetResult(true);
-            _finish.Task.GetAwaiter().GetResult();
-            return new KanataLayerChanged(KeyboardLayer.From("base"));
-        }
-
-        public void Finish() => _finish.TrySetResult(true);
     }
 
     private sealed class BlockingTargetDiscovery : ITargetDiscovery

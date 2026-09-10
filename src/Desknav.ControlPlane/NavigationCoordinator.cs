@@ -39,7 +39,7 @@ public sealed class NavigationCoordinator : ReceiveActor
             exception =>
             {
                 Context.Parent.Tell(new RuntimeFailure(exception));
-                return Directive.Resume;
+                return Directive.Stop;
             });
 
     public static Props CreateProps(
